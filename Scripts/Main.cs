@@ -33,6 +33,8 @@ namespace PsdlViewer {
 
         public override void _Ready() {
             Instance = this;
+            AppLog.Install();
+            FileLog.Output = text => GD.Print(text);
             RenderingServer.SetDebugGenerateWireframes(true);
             Settings.Load();
             TextureStore.LoadPlaceholders();
@@ -70,15 +72,7 @@ namespace PsdlViewer {
             BuildOverlay();
             BuildTabMenu();
 
-            OpenPanel(new BlocksPanel(), leftDock);
-            OpenPanel(new RoadsPanel(), leftDock, false);
-            OpenPanel(new PathsetsPanel(), leftDock, false);
-            OpenPanel(new TerrainView(), centerDock);
-            OpenPanel(new VerticesPanel(), bottomDock);
-            OpenPanel(new TexturesPanel(), bottomDock, false);
-            OpenPanel(new HeightsPanel(), bottomDock, false);
-            OpenPanel(new InstPanel(), bottomDock, false);
-            OpenPanel(new RoutesPanel(), bottomDock, false);
+            OpenDefaultPanels();
 
             Doc.StatusMessage += SetStatus;
             Doc.PsdlReplaced += UpdateCounts;
@@ -88,6 +82,21 @@ namespace PsdlViewer {
             GetWindow().FilesDropped += OnFilesDropped;
             SetStatus("Ready. Open a PSDL file with File > Open (Ctrl+O), or drop files on the window.");
             CallDeferred(MethodName.HandleCommandLine);
+        }
+
+        public override void _ExitTree() => AppLog.Uninstall();
+
+        public override void _UnhandledInput(InputEvent e) {
+            if (e is not InputEventKey { Pressed: true, Echo: false, Keycode: Key.Escape } || busy) return;
+            DeselectAll();
+            GetViewport().SetInputAsHandled();
+        }
+
+        /// <summary>Escape: clears the selection of every list and of the 3D view.</summary>
+        void DeselectAll() {
+            foreach (var table in FindChildren("*", "", true, false).OfType<VirtualTable>()) table.ClearSelection();
+            Doc.DeselectAll();
+            SetStatus("Selection cleared.");
         }
 
         // ---- layout ----
@@ -106,6 +115,31 @@ namespace PsdlViewer {
             bar.TabClosePressed += index => ClosePanel(dock, (int)index);
             bar.TabRmbClicked += index => ShowTabMenu(dock, (int)index);
             return dock;
+        }
+
+        void OpenDefaultPanels() {
+            OpenPanel(new RoomsPanel(), leftDock);
+            OpenPanel(new RoomPathsPanel(), leftDock, false);
+            OpenPanel(new PathsetsPanel(), leftDock, false);
+            OpenPanel(new TerrainView(), centerDock);
+            OpenPanel(new VerticesPanel(), bottomDock);
+            OpenPanel(new TexturesPanel(), bottomDock, false);
+            OpenPanel(new HeightsPanel(), bottomDock, false);
+            OpenPanel(new InstPanel(), bottomDock, false);
+            OpenPanel(new RoutesPanel(), bottomDock, false);
+            OpenPanel(new ConsolePanel(), bottomDock, false);
+        }
+
+        /// <summary>Closes every panel and restores the docks, split positions and panels of a fresh start.</summary>
+        void ResetLayout() {
+            foreach (var dock in new[] { leftDock, centerDock, bottomDock }) {
+                while (dock.GetTabCount() > 0) ClosePanel(dock, 0);
+                dock.Visible = true;
+            }
+            panelCounters.Clear();
+            mainSplit.SplitOffsets = new[] { 0 };
+            centerSplit.SplitOffsets = new[] { 0 };
+            OpenDefaultPanels();
         }
 
         string NextName(string kind) {
@@ -222,7 +256,7 @@ namespace PsdlViewer {
         void UpdateCounts() {
             var p = Doc.Psdl;
             string name = string.IsNullOrEmpty(Doc.PsdlPath) ? "untitled" : Path.GetFileName(Doc.PsdlPath);
-            countsLabel.Text = $"{name}   {p.Vertices.Count} vertices   {p.Heights.Count} heights   {p.Textures.Count} textures   {p.Blocks.Count} blocks   {p.Roads.Count} roads   {Doc.Inst.Components.Count} INST   {Doc.Bai.Routes.Count} routes";
+            countsLabel.Text = $"{name}   {p.Vertices.Count} vertices   {p.Heights.Count} heights   {p.Textures.Count} textures   {p.Rooms.Count} rooms   {p.RoomPaths.Count} room paths   {Doc.Inst.Components.Count} INST   {Doc.Bai.Routes.Count} routes";
             GetWindow().Title = $"PSDL Viewer - {name}";
         }
 
@@ -254,8 +288,8 @@ namespace PsdlViewer {
 
         enum Cmd {
             New, Open, Save, OpenInst, SaveInst, OpenBai, SaveBai, OpenPathset, ImportVertices, AppendPsdl, ExportText, Options, Exit,
-            ViewBlocks, ViewVertices, ViewTextures, ViewHeights, ViewRoads, ViewInst, ViewRoutes, ViewTerrain, ViewPathsets, RefreshBlocks, FlushTextures, ResetLayout,
-            AutoNeighbours, AutoLastAttr, AutoBlockType, AutoBlockSort, AutoDimensions, RandomTerrain, AutoFacadeBounds, GenerateCpvs,
+            ViewRooms, ViewVertices, ViewTextures, ViewHeights, ViewRoomPaths, ViewInst, ViewRoutes, ViewTerrain, ViewPathsets, ViewConsole, RefreshRooms, FlushTextures, ResetLayout,
+            AutoNeighbours, AutoLastAttr, AutoRoomFlags, AutoRoomSort, AutoDimensions, RandomTerrain, AutoFacadeBounds, GenerateCpvs,
             ListAttributes, About
         }
 
@@ -285,18 +319,19 @@ namespace PsdlViewer {
             var view = Menu(bar, "View");
             var views = new PopupMenu { Name = "Views" };
             views.IdPressed += id => Execute((Cmd)(int)id);
-            Item(views, "Block list", Cmd.ViewBlocks, Key.B, true);
+            Item(views, "Room list", Cmd.ViewRooms, Key.B, true);
             Item(views, "Vertex list", Cmd.ViewVertices, Key.V, true);
             Item(views, "Texture list", Cmd.ViewTextures, Key.T, true);
             Item(views, "Height list", Cmd.ViewHeights, Key.F, true);
-            Item(views, "Road list", Cmd.ViewRoads, Key.U, true);
+            Item(views, "Room path list", Cmd.ViewRoomPaths, Key.U, true);
             Item(views, "INST list", Cmd.ViewInst, Key.I, true);
             Item(views, "BAI route list", Cmd.ViewRoutes, Key.None);
             Item(views, "Terrain view", Cmd.ViewTerrain, Key.Key3, true);
             Item(views, "Pathset list", Cmd.ViewPathsets, Key.None);
+            Item(views, "Console", Cmd.ViewConsole, Key.None);
             view.AddChild(views);
             view.AddSubmenuNodeItem("Views", views);
-            Item(view, "Refresh blocks", Cmd.RefreshBlocks, Key.R);
+            Item(view, "Refresh rooms", Cmd.RefreshRooms, Key.R);
             Item(view, "Flush textures", Cmd.FlushTextures);
             view.AddSeparator();
             Item(view, "Reset layout", Cmd.ResetLayout);
@@ -304,22 +339,22 @@ namespace PsdlViewer {
             var tools = Menu(bar, "Tools");
             Item(tools, "Auto neighbours", Cmd.AutoNeighbours);
             Item(tools, "Auto last attribute", Cmd.AutoLastAttr);
-            Item(tools, "Auto block type", Cmd.AutoBlockType);
-            Item(tools, "Auto block sort", Cmd.AutoBlockSort);
+            Item(tools, "Auto room flags", Cmd.AutoRoomFlags);
+            Item(tools, "Auto room sort", Cmd.AutoRoomSort);
             Item(tools, "Auto dimension", Cmd.AutoDimensions);
             Item(tools, "Random terrain...", Cmd.RandomTerrain);
             Item(tools, "Auto facade bounds", Cmd.AutoFacadeBounds);
             Item(tools, "Generate CPVS...", Cmd.GenerateCpvs);
-            tools.SetItemTooltip(0, "Sets up all neighbour references of all block perimeters");
-            tools.SetItemTooltip(1, "Sets up the last attribute flag in all block attributes");
-            tools.SetItemTooltip(2, "Sets up all block types based on the contained attributes");
-            tools.SetItemTooltip(3, "Sorts all blocks according to block type");
+            tools.SetItemTooltip(0, "Sets up all neighbour references of all room perimeters");
+            tools.SetItemTooltip(1, "Sets up the last attribute flag in all room attributes");
+            tools.SetItemTooltip(2, "Sets up the road and intersection flags of all rooms based on the contained attributes");
+            tools.SetItemTooltip(3, "Sorts all rooms by type: plain, road, intersection");
             tools.SetItemTooltip(4, "Sets the min and max vectors and the bounding sphere");
             tools.SetItemTooltip(6, "Adds a facade bound for every facade that doesn't have one");
             tools.SetItemTooltip(7, "Generates the simplest possible CPVS file from the perimeters");
 
             var help = Menu(bar, "Help");
-            Item(help, "List block attributes...", Cmd.ListAttributes);
+            Item(help, "List room attributes...", Cmd.ListAttributes);
             Item(help, "About...", Cmd.About);
             return bar;
         }
@@ -344,7 +379,14 @@ namespace PsdlViewer {
                     Dialogs.Confirm("Discard the current PSDL and start a new one?", () => _ = ReplacePsdl(new PsdlFile(), "New PSDL", ""));
                     break;
                 case Cmd.Open:
-                    Dialogs.OpenFile("Open PSDL file", new[] { "*.psdl ; PSDL files", "*.xml ; PSDL-ML files" }, OpenPsdl);
+                    Dialogs.OpenFile("Open PSDL file", new[] { "*.psdl ; PSDL files", "*.xml ; PSDL-ML files" },
+                        new[] { ("Load sibling INST", Settings.Current.LoadSiblingInst), ("Load sibling BAI", Settings.Current.LoadSiblingBai) },
+                        (path, options) => {
+                            Settings.Current.LoadSiblingInst = options[0];
+                            Settings.Current.LoadSiblingBai = options[1];
+                            Settings.Save();
+                            OpenPsdl(path);
+                        });
                     break;
                 case Cmd.Save:
                     Dialogs.SaveFile("Save PSDL file", new[] { "*.psdl ; PSDL files" }, Path.GetFileName(Doc.PsdlPath), path => _ = Run("Saving PSDL file", async p => {
@@ -411,6 +453,7 @@ namespace PsdlViewer {
                         await Task.Run(() => psdl.Append(path, p));
                         Doc.SetPsdl(psdl, Doc.PsdlPath);
                         await RenderAll(p);
+                        ReportLoadError(psdl, path);
                     }));
                     break;
                 case Cmd.ExportText:
@@ -429,16 +472,17 @@ namespace PsdlViewer {
                 case Cmd.Exit:
                     GetTree().Quit();
                     break;
-                case Cmd.ViewBlocks: OpenPanel(new BlocksPanel()); break;
+                case Cmd.ViewRooms: OpenPanel(new RoomsPanel()); break;
                 case Cmd.ViewVertices: OpenPanel(new VerticesPanel(), bottomDock); break;
                 case Cmd.ViewTextures: OpenPanel(new TexturesPanel(), bottomDock); break;
                 case Cmd.ViewHeights: OpenPanel(new HeightsPanel(), bottomDock); break;
-                case Cmd.ViewRoads: OpenPanel(new RoadsPanel()); break;
+                case Cmd.ViewRoomPaths: OpenPanel(new RoomPathsPanel()); break;
                 case Cmd.ViewInst: OpenPanel(new InstPanel(), bottomDock); break;
                 case Cmd.ViewRoutes: OpenPanel(new RoutesPanel(), bottomDock); break;
                 case Cmd.ViewTerrain: OpenPanel(new TerrainView(), centerDock); break;
                 case Cmd.ViewPathsets: OpenPanel(new PathsetsPanel()); break;
-                case Cmd.RefreshBlocks: _ = RefreshBlocks("Rendering terrain"); break;
+                case Cmd.ViewConsole: ShowSingleton<ConsolePanel>(() => new ConsolePanel(), bottomDock); break;
+                case Cmd.RefreshRooms: _ = RefreshRooms("Rendering terrain"); break;
                 case Cmd.FlushTextures:
                     _ = Run("Rendering terrain", async p => {
                         TextureStore.Flush();
@@ -447,15 +491,11 @@ namespace PsdlViewer {
                         await RenderAll(p);
                     });
                     break;
-                case Cmd.ResetLayout:
-                    mainSplit.SplitOffsets = new[] { 0 };
-                    centerSplit.SplitOffsets = new[] { 0 };
-                    foreach (var dock in new[] { leftDock, centerDock, bottomDock }) dock.Visible = true;
-                    break;
-                case Cmd.AutoNeighbours: RunTool("Computing perimeters", p => Tools.AutoNeighbours(Doc.Psdl, p), DataKind.Blocks); break;
-                case Cmd.AutoLastAttr: RunTool("Computing last attribute flags", p => Tools.AutoLastAttribute(Doc.Psdl, p), DataKind.Blocks); break;
-                case Cmd.AutoBlockType: RunTool("Computing block types", p => Tools.AutoBlockType(Doc.Psdl, p), DataKind.Blocks); break;
-                case Cmd.AutoBlockSort: RunTool("Sorting blocks", p => Tools.AutoBlockSort(Doc.Psdl, p), DataKind.Blocks, DataKind.Inst, DataKind.Roads); break;
+                case Cmd.ResetLayout: ResetLayout(); break;
+                case Cmd.AutoNeighbours: RunTool("Computing perimeters", p => Tools.AutoNeighbours(Doc.Psdl, p), DataKind.Rooms); break;
+                case Cmd.AutoLastAttr: RunTool("Computing last attribute flags", p => Tools.AutoLastAttribute(Doc.Psdl, p), DataKind.Rooms); break;
+                case Cmd.AutoRoomFlags: RunTool("Computing room flags", p => Tools.AutoRoomFlags(Doc.Psdl, p), DataKind.Rooms); break;
+                case Cmd.AutoRoomSort: RunTool("Sorting rooms", p => Tools.AutoRoomSort(Doc.Psdl, p), DataKind.Rooms, DataKind.Inst, DataKind.RoomPaths); break;
                 case Cmd.AutoDimensions:
                     Tools.AutoDimensions(Doc.Psdl);
                     scene.RebuildCityBound();
@@ -470,7 +510,7 @@ namespace PsdlViewer {
                     RunTool("Computing facade bounds", p => {
                         int n = Tools.AutoFacadeBounds(Doc.Psdl, p);
                         CallDeferred(MethodName.SetStatus, $"Added {n} facade bounds.");
-                    }, DataKind.Blocks);
+                    }, DataKind.Rooms);
                     break;
                 case Cmd.GenerateCpvs:
                     Dialogs.Input("Generate CPVS", "Maximum radial distance (metres):", "200", text => {
@@ -483,7 +523,7 @@ namespace PsdlViewer {
                     });
                     break;
                 case Cmd.ListAttributes:
-                    Dialogs.ShowText("Known block attributes", BlockAttribute.KnownAttributesText());
+                    Dialogs.ShowText("Known room attributes", RoomAttribute.KnownAttributesText());
                     break;
                 case Cmd.About:
                     ShowAbout();
@@ -495,7 +535,7 @@ namespace PsdlViewer {
             _ = Run(title, async p => {
                 await Task.Run(() => tool(p));
                 foreach (var k in changed) Doc.NotifyChanged(k);
-                SetStatus(title.TrimEnd('.') + ": done. Use View > Refresh blocks to update the 3D view.");
+                SetStatus(title.TrimEnd('.') + ": done. Use View > Refresh rooms to update the 3D view.");
             });
         }
 
@@ -513,17 +553,15 @@ namespace PsdlViewer {
         void ShowAbout() {
             var d = new AcceptDialog { Title = "About PSDL Viewer" };
             var row = new HBoxContainer();
-            row.AddChild(new TextureRect { Texture = GD.Load<Texture2D>("res://Assets/Icons/about_icon.png"), StretchMode = TextureRect.StretchModeEnum.KeepCentered });
             row.AddChild(new Label {
                 Text = "PSDL Viewer\n\n" +
-                       "Experimental analyzer/editor for PSDL files.\n" +
+                       "Analyzer/editor for PSDL files.\n" +
                        "PSDL files define terrain, roads and simple\n" +
                        "buildings for a city in the Microsoft game\n" +
                        "Midtown Madness 2.\n\n" +
-                       "PSDL Viewer was created by Fredrik Bergholtz,\n" +
-                       "a.k.a. fre_ber. For more information about\n" +
-                       "Midtown Madness, check out http://www.mm2c.com/\n\n" +
-                       "Godot port: rendering with Godot " + Engine.GetVersionInfo()["string"]
+                       "The original PSDL Viewer (a Java 3D application)\n" +
+                       "was created by Fredrik Bergholtz, a.k.a. fre_ber. \n" +
+                       "This version is made with Godot " + Engine.GetVersionInfo()["string"]
             });
             d.AddChild(row);
             AddChild(d);
@@ -568,21 +606,66 @@ namespace PsdlViewer {
                         return;
                     }
                     _ = Run("Opening PSDL-ML file", async p => {
+                        await UnloadSiblings(p);
                         var psdl = await Task.Run(() => PsdlMl.Import(path, weld, p));
                         GuessFolders(path);
                         Doc.SetPsdl(psdl, path);
+                        if (Settings.Current.LoadSiblingInst) await LoadSiblingInst(path, p);
+                        if (Settings.Current.LoadSiblingBai) await LoadSiblingBai(path, p);
                         await RenderAll(p);
                     });
                 });
                 return;
             }
             _ = Run("Opening PSDL file", async p => {
+                await UnloadSiblings(p);
                 var psdl = await Task.Run(() => PsdlFile.Load(path, p));
                 GuessFolders(path);
                 Doc.SetPsdl(psdl, path);
+                string inst = Settings.Current.LoadSiblingInst ? await LoadSiblingInst(path, p) : null;
+                string bai = Settings.Current.LoadSiblingBai ? await LoadSiblingBai(path, p) : null;
                 await RenderAll(p);
-                SetStatus($"Loaded {path}");
+                string status = $"{(psdl.LoadError == null ? "Loaded" : "Partially loaded")} {path}";
+                if (inst != null) status += $", {Doc.Inst.Components.Count} INST components from {inst}";
+                if (bai != null) status += $", {Doc.Bai.Routes.Count} routes from {bai}";
+                SetStatus(status);
+                ReportLoadError(psdl, path);
             });
+        }
+
+        /// <summary>Warns that a damaged PSDL file could only be read up to the point where the problem was found.</summary>
+        static void ReportLoadError(PsdlFile psdl, string path) {
+            if (psdl.LoadError == null) return;
+            Dialogs.Warning($"{Path.GetFileName(path)} is damaged: {psdl.LoadError}\nShowing the data that was read before that point.");
+        }
+
+        /// <summary>Drops the current INST and BAI files so they do not stay attached to a newly opened PSDL.</summary>
+        async Task UnloadSiblings(Progress p) {
+            Doc.SetInst(new InstFile(), null);
+            Doc.SetBai(new BaiFile(), null);
+            await scene.RebuildInst(p);
+            await scene.RebuildBai(p);
+        }
+
+        /// <summary>Loads the INST file next to a PSDL file with the same base name (sf.psdl -> sf.inst), if there is one. Returns its path, or null.</summary>
+        Task<string> LoadSiblingInst(string psdlPath, Progress p) =>
+            LoadSibling(psdlPath, ".inst", "INST", path => InstFile.Load(path, p), Doc.SetInst);
+
+        /// <summary>Loads the BAI file next to a PSDL file with the same base name (sf.psdl -> sf.bai), if there is one. Returns its path, or null.</summary>
+        Task<string> LoadSiblingBai(string psdlPath, Progress p) =>
+            LoadSibling(psdlPath, ".bai", "BAI", path => BaiFile.Load(path, p), Doc.SetBai);
+
+        static async Task<string> LoadSibling<T>(string psdlPath, string extension, string kind, Func<string, T> load, Action<T, string> set) {
+            string path = Path.ChangeExtension(psdlPath, extension);
+            if (!File.Exists(path)) return null;
+            try {
+                set(await Task.Run(() => load(path)), path);
+                return path;
+            } catch (Exception e) {
+                GD.PrintErr(e.ToString());
+                Dialogs.Error($"Opening {kind} file {path}: {e.Message}");
+                return null;
+            }
         }
 
         /// <summary>When no folders are configured, uses the texture and geometry folders next to the city folder (MM2 layout).</summary>
@@ -615,7 +698,7 @@ namespace PsdlViewer {
             });
         }
 
-        public Task RefreshBlocks(string title) => Run(title, p => scene.RebuildPsdl(p));
+        public Task RefreshRooms(string title) => Run(title, p => scene.RebuildPsdl(p));
 
         async Task RenderAll(Progress p) {
             await scene.RebuildPsdl(p);
@@ -645,9 +728,9 @@ namespace PsdlViewer {
         public void ApplySettings(Settings next) {
             var old = Settings.Current;
             bool paths = !old.TexturePaths.SequenceEqual(next.TexturePaths) || !old.GeometryPaths.SequenceEqual(next.GeometryPaths);
-            bool city = paths || old.ColouringMode != next.ColouringMode || old.LightingMode != next.LightingMode || old.RenderBlockAttributes != next.RenderBlockAttributes;
+            bool city = paths || old.ColouringMode != next.ColouringMode || old.LightingMode != next.LightingMode || old.RenderRoomAttributes != next.RenderRoomAttributes;
             bool props = paths || old.LightingMode != next.LightingMode;
-            bool labels = old.ShowBlockIndices != next.ShowBlockIndices || Math.Abs(old.LabelSize - next.LabelSize) > 1e-4f;
+            bool labels = old.ShowRoomIndices != next.ShowRoomIndices || Math.Abs(old.LabelSize - next.LabelSize) > 1e-4f;
             Settings.Replace(next);
             scene.ApplySettings();
             if (labels) scene.RebuildLabels();
@@ -673,7 +756,7 @@ namespace PsdlViewer {
             }
         }
 
-        // ---- command line: --psdl, --inst, --bai, --pathset, --screenshot <png>, --camera x,y,z,pitch,yaw ----
+        // ---- command line: --psdl, --inst, --bai, --sibling-inst, --sibling-bai, --pathset, --screenshot <png>, --camera x,y,z,pitch,yaw ----
 
         async void HandleCommandLine() {
             var args = OS.GetCmdlineUserArgs();
@@ -688,18 +771,24 @@ namespace PsdlViewer {
             }
             if (Arg("--colouring") is string colouring && int.TryParse(colouring, out int cm)) Settings.Current.ColouringMode = cm;
             if (Arg("--lighting") is string lighting && int.TryParse(lighting, out int lm)) Settings.Current.LightingMode = lm;
-            if (args.Contains("--labels")) Settings.Current.ShowBlockIndices = true;
+            if (args.Contains("--labels")) Settings.Current.ShowRoomIndices = true;
             scene.ApplySettings();
             await Run("Opening PSDL file", async p => {
                 GuessFolders(psdl);
-                Doc.SetPsdl(await Task.Run(() => PsdlFile.Load(psdl, p)), psdl);
+                var file = await Task.Run(() => PsdlFile.Load(psdl, p));
+                Doc.SetPsdl(file, psdl);
                 await scene.RebuildPsdl(p);
+                ReportLoadError(file, psdl);
                 if (Arg("--inst") is string inst) {
                     Doc.SetInst(await Task.Run(() => InstFile.Load(inst, p)), inst);
+                    await scene.RebuildInst(p);
+                } else if (args.Contains("--sibling-inst") && await LoadSiblingInst(psdl, p) != null) {
                     await scene.RebuildInst(p);
                 }
                 if (Arg("--bai") is string bai) {
                     Doc.SetBai(await Task.Run(() => BaiFile.Load(bai, p)), bai);
+                    await scene.RebuildBai(p);
+                } else if (args.Contains("--sibling-bai") && await LoadSiblingBai(psdl, p) != null) {
                     await scene.RebuildBai(p);
                 }
                 if (Arg("--pathset") is string ps) {
@@ -708,7 +797,8 @@ namespace PsdlViewer {
                     await scene.RebuildPathsets(p);
                 }
             });
-            if (Arg("--select") is string sel && BinaryUtil.TryParseHex(sel, out int block)) Doc.SelectBlocks(new[] { block }, null);
+            if (Arg("--select") is string sel && BinaryUtil.TryParseHex(sel, out int room)) Doc.SelectRooms(new[] { room }, null);
+            if (Arg("--select-inst") is string selInst && BinaryUtil.TryParseHex(selInst, out int component)) Doc.SelectInst(new[] { component }, null);
             if (Arg("--camera") is string cam) {
                 float[] c = cam.Split(',').Select(s => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
                 foreach (var view in Descendants<TerrainView>(this)) view.SetCamera(new Vector3(c[0], c[1], c[2]), new Vector3(c[3], c[4], 0));

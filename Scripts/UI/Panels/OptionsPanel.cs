@@ -46,6 +46,7 @@ namespace PsdlViewer.UI.Panels {
             }
             tabs.AddChild(FileTab());
             tabs.AddChild(TerrainTab());
+            tabs.AddChild(ControlsTab());
         }
 
         Control FileTab() {
@@ -56,6 +57,8 @@ namespace PsdlViewer.UI.Panels {
             grid.AddText("Open folder:", () => edit.OpenPath, v => edit.OpenPath = v);
             grid.AddText("Save folder:", () => edit.SavePath, v => edit.SavePath = v);
             grid.AddCheck("Native file dialogs", () => edit.UseNativeFileDialogs, v => edit.UseNativeFileDialogs = v, "Use the operating system's file picker instead of Godot's");
+            grid.AddCheck("Load sibling INST", () => edit.LoadSiblingInst, v => edit.LoadSiblingInst = v, "When opening a PSDL file, also open the INST file next to it with the same name (sf.psdl -> sf.inst)");
+            grid.AddCheck("Load sibling BAI", () => edit.LoadSiblingBai, v => edit.LoadSiblingBai = v, "When opening a PSDL file, also open the BAI file next to it with the same name (sf.psdl -> sf.bai)");
             box.AddChild(grid);
             box.AddChild(PathList("Texture folders (searched for .tex, .gif, .jpg, .tga, .png, .bmp)", edit.TexturePaths));
             box.AddChild(PathList("Geometry folders (searched for .pkg)", edit.GeometryPaths));
@@ -106,16 +109,33 @@ namespace PsdlViewer.UI.Panels {
             grid.AddOption("Drawing mode", Settings.DrawingNames, () => edit.DrawingMode, v => edit.DrawingMode = v);
             grid.AddOption("Colouring mode", Settings.ColouringNames, () => edit.ColouringMode, v => edit.ColouringMode = v);
             grid.AddOption("Lighting mode", Settings.LightingNames, () => edit.LightingMode, v => edit.LightingMode = v);
-            grid.AddCheck("Show block indices", () => edit.ShowBlockIndices, v => edit.ShowBlockIndices = v);
-            grid.AddCheck("Render block attributes", () => edit.RenderBlockAttributes, v => edit.RenderBlockAttributes = v, "Off: draw each block's perimeter only");
-            grid.AddCheck("Show block bounds", () => edit.ShowBlockBounds, v => edit.ShowBlockBounds = v, "Outline the selected blocks");
+            grid.AddCheck("Show room indices", () => edit.ShowRoomIndices, v => edit.ShowRoomIndices = v);
+            grid.AddCheck("Render room attributes", () => edit.RenderRoomAttributes, v => edit.RenderRoomAttributes = v, "Off: draw each room's perimeter only");
+            grid.AddCheck("Show room bounds", () => edit.ShowRoomBounds, v => edit.ShowRoomBounds = v, "Outline the selected rooms");
             grid.AddCheck("Show city bounds", () => edit.ShowCityBounds, v => edit.ShowCityBounds = v, "Bounding sphere from the PSDL dimensions");
             grid.AddCheck("Render INST", () => edit.RenderInst, v => edit.RenderInst = v);
             grid.AddCheck("Show pathsets", () => edit.ShowPathsets, v => edit.ShowPathsets = v);
             grid.AddCheck("Show BAI", () => edit.ShowBai, v => edit.ShowBai = v);
-            grid.AddFloat("Block label size", () => edit.LabelSize, v => edit.LabelSize = Math.Clamp(v, 0.1f, 100), "Height of the block index labels in metres");
+            grid.AddFloat("Room label size", () => edit.LabelSize, v => edit.LabelSize = Math.Clamp(v, 0.1f, 100), "Height of the room index labels in metres");
             grid.AddFloat("Field of view", () => edit.CameraFov, v => edit.CameraFov = Math.Clamp(v, 5, 150), "Degrees");
             grid.AddFloat("Background brightness", () => edit.BackgroundBrightness, v => edit.BackgroundBrightness = Math.Clamp(v, 0, 1));
+            return scroll;
+        }
+
+        Control ControlsTab() {
+            var scroll = new ScrollContainer { Name = "Controls", HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
+            var box = new VBoxContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+            scroll.AddChild(box);
+            var grid = new PropertyGrid();
+            var description = new Label { Modulate = new Color(1, 1, 1, 0.7f) };
+            grid.AddOption("Camera controls", Settings.CameraControlNames, () => edit.CameraControls, v => {
+                edit.CameraControls = v;
+                description.Text = TerrainView.ControlsDescription(v);
+            });
+            grid.AddCheck("Emulate 3-button mouse", () => edit.EmulateMiddleButton, v => edit.EmulateMiddleButton = v, "Alt + left button acts as the middle button");
+            box.AddChild(grid);
+            description.Text = TerrainView.ControlsDescription(edit.CameraControls);
+            box.AddChild(description);
             return scroll;
         }
     }
@@ -168,7 +188,7 @@ namespace PsdlViewer.UI.Panels {
                 case 2:
                     if (!city.Initialized) break;
                     city.Smooth();
-                    await Main.Instance.RefreshBlocks("Generating surface");
+                    await Main.Instance.RefreshRooms("Generating surface");
                     break;
                 case 3:
                     if (!city.Initialized) break;
@@ -197,7 +217,7 @@ namespace PsdlViewer.UI.Panels {
             var grid = new PropertyGrid();
             switch (step) {
                 case 0:
-                    content.AddChild(Info("Creates a new city: a grid of size x size vertices, divided into blocks of 3 x 3 vertices. This replaces the current PSDL."));
+                    content.AddChild(Info("Creates a new city: a grid of size x size vertices, divided into rooms of 3 x 3 vertices. This replaces the current PSDL."));
                     grid.AddInt("Size", () => city.Size, v => city.Size = Math.Clamp(v, 3, 257), "Vertices per side; 2^n + 1 works best");
                     grid.AddFloat("Side length", () => city.SideLength, v => city.SideLength = v, "Metres");
                     grid.AddFloat("Initial height", () => city.InitialHeight, v => city.InitialHeight = v);

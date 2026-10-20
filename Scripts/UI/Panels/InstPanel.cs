@@ -14,6 +14,7 @@ namespace PsdlViewer.UI.Panels {
         readonly Label file = new() { Modulate = new Color(1, 1, 1, 0.6f), ClipText = true };
         readonly Control detail;
         InstComponent current;
+        bool syncing;
 
         public InstPanel() {
             var bar = new HBoxContainer();
@@ -24,7 +25,7 @@ namespace PsdlViewer.UI.Panels {
             var split = new VSplitContainer { SizeFlagsVertical = SizeFlags.ExpandFill };
             AddChild(split);
             table.AddColumn("Index", 50);
-            table.AddColumn("Block", 56, true);
+            table.AddColumn("Room", 56, true);
             table.AddColumn("Type", 46);
             table.AddColumn("Geometry", 230, true);
             table.AddColumn("Modifiers", 70, true);
@@ -34,7 +35,7 @@ namespace PsdlViewer.UI.Panels {
                 var x = Doc.Inst.Components[r];
                 return c switch {
                     0 => r.ToString("x"),
-                    1 => x.Block.ToString("x"),
+                    1 => x.Room.ToString("x"),
                     2 => x.IsSimple ? "Simple" : "Coord",
                     3 => x.Pkg,
                     _ => BinaryUtil.Hex(x.Modifiers)
@@ -45,15 +46,20 @@ namespace PsdlViewer.UI.Panels {
                 if (c == 3) x.Pkg = text.Trim();
                 else {
                     if (!BinaryUtil.TryParseHex(text, out int v)) return $"\"{text}\" is not a hexadecimal number.";
-                    if (c == 1) x.Block = v;
+                    if (c == 1) x.Room = v;
                     else x.Modifiers = v & 0xffff;
                 }
                 grid.Refresh();
+                Doc.NotifyChanged(DataKind.Inst);
                 return null;
             };
             table.SelectionChanged += () => {
                 Show(table.SelectedRow);
-                if (current != null && current.Block >= 0) Doc.SelectBlocks(new[] { current.Block }, this);
+                if (syncing) return;
+                syncing = true;
+                Doc.SelectInst(table.SelectedRows, this);
+                if (current != null && current.Room >= 0) Doc.SelectRooms(new[] { current.Room }, this);
+                syncing = false;
             };
             table.ContextMenu = () => {
                 int[] sel = table.SelectedRows;
@@ -77,14 +83,19 @@ namespace PsdlViewer.UI.Panels {
             scroll.AddChild(grid);
             detail = scroll;
             detail.Visible = false;
-            grid.Changed += () => table.Refresh();
+            grid.Changed += () => {
+                table.Refresh();
+                Doc.NotifyChanged(DataKind.Inst);
+            };
             split.AddChild(scroll);
             Subscribe(() => {
                 Doc.InstReplaced += OnReplaced;
                 Doc.DataChanged += OnDataChanged;
+                Doc.InstSelected += OnInstSelected;
             }, () => {
                 Doc.InstReplaced -= OnReplaced;
                 Doc.DataChanged -= OnDataChanged;
+                Doc.InstSelected -= OnInstSelected;
             });
             OnReplaced();
         }
@@ -106,7 +117,7 @@ namespace PsdlViewer.UI.Panels {
             if (current == null) return;
             var c = current;
             grid.AddText("Geometry:", () => c.Pkg, v => c.Pkg = v.Trim(), "PKG name without extension");
-            grid.AddHex("Block:", () => c.Block, v => c.Block = v);
+            grid.AddHex("Room:", () => c.Room, v => c.Room = v);
             grid.AddHex("Modifiers:", () => c.Modifiers, v => c.Modifiers = v & 0xffff, 4, "Paint job in the low bits");
             grid.AddVector("Origin:", () => c.Origin, v => c.Origin = v);
             if (c is InstSimple s) {
@@ -129,6 +140,13 @@ namespace PsdlViewer.UI.Panels {
             if (kind != DataKind.Inst) return;
             table.Refresh();
             if (current != null && !Doc.Inst.Components.Contains(current)) Show(-1);
+        }
+
+        void OnInstSelected(int[] components, object source) {
+            if (source == this || syncing) return;
+            syncing = true;
+            table.Select(components, true, true);
+            syncing = false;
         }
     }
 }

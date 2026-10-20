@@ -14,7 +14,7 @@ config/name="PSDL Viewer"
 config/description="Viewer/editor for Midtown Madness 2 PSDL city files (Godot port of fre_ber's PSDL Viewer)."
 run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.7", "C#", "Forward Plus")
-config/icon="res://icon.svg"
+config/icon="res://icon.png"
 
 [display]
 

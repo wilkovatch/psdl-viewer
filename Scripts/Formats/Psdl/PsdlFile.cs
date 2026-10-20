@@ -7,83 +7,88 @@ using System.Numerics;
 namespace PsdlViewer.Formats.Psdl {
     public class PerimeterPoint {
         public int Vertex;
-        /// <summary>Index of the block that connects at this point, -1 for none.</summary>
-        public int Block = -1;
+        /// <summary>Index of the room that connects at this point, -1 for none.</summary>
+        public int Room = -1;
 
         public PerimeterPoint() { }
 
-        public PerimeterPoint(int vertex, int block) {
+        public PerimeterPoint(int vertex, int room) {
             Vertex = vertex;
-            Block = block;
+            Room = room;
         }
 
-        public PerimeterPoint Clone() => new(Vertex, Block);
+        public PerimeterPoint Clone() => new(Vertex, Room);
     }
 
-    public class Block {
-        public const int TypeBit0 = 1, TypeSubterranean = 2, TypePlain = 4, TypeRoad = 8, TypeIntersection = 16;
-        public const int TypeBit5 = 32, TypeWarp = 64, TypeInst = 128;
-        public static readonly string[] TypeNames = {
+    public class Room {
+        public const int FlagBit0 = 1, FlagSubterranean = 2, FlagPlain = 4, FlagRoad = 8, FlagIntersection = 16;
+        public const int FlagBit5 = 32, FlagWarp = 64, FlagInst = 128;
+        public static readonly string[] FlagNames = {
             "Bit 0: Unknown", "Bit 1: Subterranean", "Bit 2: Plain", "Bit 3: Road",
             "Bit 4: Intersection", "Bit 5: Unknown", "Bit 6: Warp room", "Bit 7: INST"
         };
-        static readonly string[] ShortTypeNames = { "b0", "Sub", "Plain", "Road", "Inter", "b5", "Warp", "INST" };
+        static readonly string[] ShortFlagNames = { "b0", "Sub", "Plain", "Road", "Inter", "b5", "Warp", "INST" };
 
         public List<PerimeterPoint> Perimeter = new();
-        public List<BlockAttribute> Attributes = new();
-        public int Type = TypePlain;
-        /// <summary>Line in proprules.csv used when a prop path runs through this block (0 = none).</summary>
+        public List<RoomAttribute> Attributes = new();
+        /// <summary>Room flags: the bits define the type of the room.</summary>
+        public int Flags = FlagPlain;
+        /// <summary>Line in proprules.csv used when a prop path runs through this room (0 = none).</summary>
         public int PropRule;
 
-        public bool IsType(int mask) => (Type & mask) != 0;
-        public void SetType(int mask, bool on) => Type = on ? Type | mask : Type & ~mask;
+        public bool HasFlag(int mask) => (Flags & mask) != 0;
+        public void SetFlag(int mask, bool on) => Flags = on ? Flags | mask : Flags & ~mask;
 
-        public string TypeText() {
+        public string FlagsText() {
             var parts = new List<string>();
             for (int i = 0; i < 8; i++) {
-                if ((Type & (1 << i)) != 0) parts.Add(ShortTypeNames[i]);
+                if ((Flags & (1 << i)) != 0) parts.Add(ShortFlagNames[i]);
             }
             return string.Join(" ", parts);
         }
 
-        public int AttributeWords => Attributes.Sum(a => a.LengthWords);
+        /// <summary>Size of the attribute list in 16-bit words.</summary>
+        public int AttributeSize => Attributes.Sum(a => a.LengthWords);
 
-        public Block Clone() {
-            return new Block {
+        public Room Clone() {
+            return new Room {
                 Perimeter = Perimeter.Select(p => p.Clone()).ToList(),
                 Attributes = Attributes.Select(a => a.Clone()).ToList(),
-                Type = Type,
+                Flags = Flags,
                 PropRule = PropRule
             };
         }
     }
 
     /// <summary>
-    /// Entry of the last PSDL section. The Java viewer calls these "roads"; they are now known to be prop paths,
-    /// so the names of most fields are still guesses.
+    /// Entry of the last PSDL section (room based props). The Java viewer calls these "roads"; they are now known
+    /// to be prop paths, so apart from the layout the field names (taken from the spec) are still guesses.
     /// </summary>
-    public class RoadPath {
-        public int Unknown0;
-        public int Unknown1;
+    public class RoomPath {
+        public int Unknown4;
+        public int Unknown5;
+        /// <summary>Density of each forward lane (one entry per lane).</summary>
         public List<float> ForwardLanes = new();
+        /// <summary>Density of each backward lane (one entry per lane).</summary>
         public List<float> BackwardLanes = new();
-        public int Unknown2;
-        public int[] StartVertices = new int[4];
-        public int[] EndVertices = new int[4];
-        public List<int> Blocks = new();
+        /// <summary>Looks like a bit field.</summary>
+        public int Unknown6;
+        public int[] StartCrossroads = new int[4];
+        public int[] EndCrossroads = new int[4];
+        public List<int> Rooms = new();
 
-        public RoadPath Clone() {
-            var copy = (RoadPath)MemberwiseClone();
+        public RoomPath Clone() {
+            var copy = (RoomPath)MemberwiseClone();
             copy.ForwardLanes = new List<float>(ForwardLanes);
             copy.BackwardLanes = new List<float>(BackwardLanes);
-            copy.StartVertices = (int[])StartVertices.Clone();
-            copy.EndVertices = (int[])EndVertices.Clone();
-            copy.Blocks = new List<int>(Blocks);
+            copy.StartCrossroads = (int[])StartCrossroads.Clone();
+            copy.EndCrossroads = (int[])EndCrossroads.Clone();
+            copy.Rooms = new List<int>(Rooms);
             return copy;
         }
 
         public override string ToString() {
-            return $"{ForwardLanes.Count}+{BackwardLanes.Count} lanes, {Blocks.Count} blocks";
+            return $"{ForwardLanes.Count}+{BackwardLanes.Count} lanes, {Rooms.Count} rooms";
         }
     }
 
@@ -105,13 +110,17 @@ namespace PsdlViewer.Formats.Psdl {
         public List<string> Textures = new();
         /// <summary>Unknown value stored after the room count (number of junctions?).</summary>
         public uint Unknown0;
-        public List<Block> Blocks = new();
-        public byte DummyFlag;
+        public List<Room> Rooms = new();
+        /// <summary>Flags of the unused room 0 (the room list is stored with one extra entry).</summary>
+        public byte DummyRoomFlags;
         public byte DummyPropRule = 0xcd;
         public Dimensions Dimensions = new();
-        public List<RoadPath> Roads = new();
-        /// <summary>Bounding spheres per block, only present in Midnight Club (PSD1) files.</summary>
+        public List<RoomPath> RoomPaths = new();
+        /// <summary>Bounding spheres per room, only present in Midnight Club (PSD1) files.</summary>
         public List<(Vector3 center, float[] unknown)> McDimensions = new();
+
+        /// <summary>Set by Load/Append when the file is damaged: what went wrong; only the data before that point was read.</summary>
+        public string LoadError;
 
         public bool IsMidnightClub => Magic == "PSD1";
 
@@ -127,138 +136,188 @@ namespace PsdlViewer.Formats.Psdl {
         }
 
         void Read(string path, bool append, Progress progress) {
+            LoadError = null;
             using var stream = File.OpenRead(path);
             using var r = new BinaryReader(stream);
             int vertexOffset = append ? Vertices.Count : 0;
             int heightOffset = append ? Heights.Count : 0;
             int textureOffset = append ? Textures.Count : 0;
-            int blockOffset = append ? Blocks.Count : 0;
+            int roomOffset = append ? Rooms.Count : 0;
             progress?.Begin("Reading header", stream.Length);
+            FileLog.Print($"{(append ? "Appending" : "Reading")} PSDL file {path}");
 
             string magic = r.ReadMagic();
+            FileLog.Print("Header: " + magic);
             if (magic != "PSD0" && magic != "PSD1") throw new InvalidDataException("Not a PSDL file.");
             bool mc = magic == "PSD1";
-            uint targetSize = r.ReadUInt32();
-            if (!append) {
-                Magic = magic;
-                TargetSize = targetSize;
+            if (!append) Magic = magic;
+
+            // like the original viewer, a damaged file keeps everything that was read before the problem
+            string section = "header";
+            void Section(string name) {
+                section = name;
+                if (progress != null) progress.Note = "Reading " + name;
             }
+            var newRooms = new List<Room>();
+            var newPaths = new List<RoomPath>();
+            Dimensions dims = null;
+            try {
+                uint targetSize = r.ReadUInt32();
+                if (!append) TargetSize = targetSize;
 
-            if (progress != null) progress.Note = "Reading vertices";
-            uint n = r.ReadUInt32();
-            for (uint i = 0; i < n; i++) Vertices.Add(r.ReadVec3());
+                Section("vertices");
+                uint n = r.ReadUInt32();
+                FileLog.Print($"{n} vertices");
+                for (uint i = 0; i < n; i++) Vertices.Add(r.ReadVec3());
 
-            if (progress != null) progress.Note = "Reading heights";
-            n = r.ReadUInt32();
-            for (uint i = 0; i < n; i++) Heights.Add(r.ReadSingle());
+                Section("heights");
+                n = r.ReadUInt32();
+                FileLog.Print($"{n} heights");
+                for (uint i = 0; i < n; i++) Heights.Add(r.ReadSingle());
 
-            if (progress != null) progress.Note = "Reading textures";
-            n = r.ReadUInt32();
-            for (uint i = 0; i + 1 < n; i++) {
-                Textures.Add(r.ReadLengthString());
-                if (mc) r.ReadByte();
-            }
-            if (progress != null) progress.Value = stream.Position;
-
-            if (progress != null) progress.Note = "Reading blocks";
-            uint roomCount = r.ReadUInt32();
-            uint unknown0 = r.ReadUInt32();
-            if (!append) Unknown0 = unknown0;
-            var newBlocks = new List<Block>();
-            for (uint i = 0; i + 1 < roomCount; i++) {
-                var block = ReadBlock(r);
-                foreach (var p in block.Perimeter) {
-                    p.Vertex += vertexOffset;
-                    if (p.Block >= 0) p.Block += blockOffset;
+                Section("textures");
+                n = r.ReadUInt32();
+                FileLog.Print($"{Math.Max(0, n - 1L)} textures");
+                for (uint i = 0; i + 1 < n; i++) {
+                    Textures.Add(r.ReadLengthString());
+                    if (mc) r.ReadByte();
                 }
-                foreach (var a in block.Attributes) a.AddOffsets(vertexOffset, heightOffset, textureOffset);
-                newBlocks.Add(block);
                 if (progress != null) progress.Value = stream.Position;
-            }
-            Blocks.AddRange(newBlocks);
 
-            if (progress != null) progress.Note = "Reading block types";
-            byte dummyFlag = r.ReadByte();
-            foreach (var b in newBlocks) b.Type = r.ReadByte();
-            byte dummyProp = r.ReadByte();
-            foreach (var b in newBlocks) b.PropRule = r.ReadByte();
-            if (!append) {
-                DummyFlag = dummyFlag;
-                DummyPropRule = dummyProp;
-            }
-
-            if (mc) {
-                if (progress != null) progress.Note = "Reading MC dimensions";
-                for (int i = 0; i < newBlocks.Count; i++) {
-                    var center = r.ReadVec3();
-                    var unknown = new[] { r.ReadSingle(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle() };
-                    McDimensions.Add((center, unknown));
+                Section("rooms");
+                long roomStart = stream.Position;
+                uint roomCount = r.ReadUInt32();
+                FileLog.Print($"{Math.Max(0, roomCount - 1L)} rooms (at 0x{roomStart:x})");
+                uint unknown0 = r.ReadUInt32();
+                if (!append) Unknown0 = unknown0;
+                for (uint i = 0; i + 1 < roomCount; i++) {
+                    var room = new Room();
+                    newRooms.Add(room); // added first so that a truncated room keeps the part that was read
+                    ReadRoom(r, room);
+                    if (progress != null) progress.Value = stream.Position;
                 }
-                r.BaseStream.Seek(newBlocks.Count * 2 + 702, SeekOrigin.Current);
+
+                Section("room flags");
+                byte dummyFlags = r.ReadByte();
+                foreach (var b in newRooms) b.Flags = r.ReadByte();
+                byte dummyProp = r.ReadByte();
+                foreach (var b in newRooms) b.PropRule = r.ReadByte();
+                if (!append) {
+                    DummyRoomFlags = dummyFlags;
+                    DummyPropRule = dummyProp;
+                }
+
+                if (mc) {
+                    Section("MC dimensions");
+                    for (int i = 0; i < newRooms.Count; i++) {
+                        var center = r.ReadVec3();
+                        var unknown = new[] { r.ReadSingle(), r.ReadSingle(), r.ReadSingle(), r.ReadSingle() };
+                        McDimensions.Add((center, unknown));
+                    }
+                    r.BaseStream.Seek(newRooms.Count * 2 + 702, SeekOrigin.Current);
+                }
+
+                Section("dimensions");
+                dims = new Dimensions {
+                    Min = r.ReadVec3(),
+                    Max = r.ReadVec3(),
+                    Center = r.ReadVec3(),
+                    Radius = r.ReadSingle()
+                };
+                FileLog.Print($"Dimensions: min {BinaryUtil.V(dims.Min)}, max {BinaryUtil.V(dims.Max)}, center {BinaryUtil.V(dims.Center)}, radius {BinaryUtil.F(dims.Radius)}");
+                if (mc) r.ReadUInt32();
+
+                Section("room paths");
+                n = r.ReadUInt32();
+                FileLog.Print($"{n} room paths");
+                for (uint i = 0; i < n; i++) {
+                    var roomPath = new RoomPath();
+                    newPaths.Add(roomPath);
+                    ReadRoomPath(r, roomPath);
+                }
+                FileLog.Print($"Bytes left in file: {stream.Length - stream.Position}");
+            } catch (Exception e) {
+                LoadError = e is EndOfStreamException ? $"the file ends while reading the {section}." : $"error while reading the {section}: {e.Message}";
             }
 
-            if (progress != null) progress.Note = "Reading dimensions";
-            var dims = new Dimensions {
-                Min = r.ReadVec3(),
-                Max = r.ReadVec3(),
-                Center = r.ReadVec3(),
-                Radius = r.ReadSingle()
-            };
-            if (!append) Dimensions = dims;
-            else MergeDimensions(dims);
-            if (mc) r.ReadUInt32();
-
-            if (progress != null) progress.Note = "Reading roads";
-            n = r.ReadUInt32();
-            for (uint i = 0; i < n; i++) {
-                var road = ReadRoad(r);
+            foreach (var room in newRooms) {
+                foreach (var p in room.Perimeter) {
+                    p.Vertex += vertexOffset;
+                    if (p.Room >= 0) p.Room += roomOffset;
+                }
+                foreach (var a in room.Attributes) a.AddOffsets(vertexOffset, heightOffset, textureOffset);
+            }
+            Rooms.AddRange(newRooms);
+            foreach (var roomPath in newPaths) {
                 for (int k = 0; k < 4; k++) {
-                    road.StartVertices[k] += vertexOffset;
-                    road.EndVertices[k] += vertexOffset;
+                    roomPath.StartCrossroads[k] += vertexOffset;
+                    roomPath.EndCrossroads[k] += vertexOffset;
                 }
-                for (int k = 0; k < road.Blocks.Count; k++) road.Blocks[k] += blockOffset;
-                Roads.Add(road);
+                for (int k = 0; k < roomPath.Rooms.Count; k++) roomPath.Rooms[k] += roomOffset;
+            }
+            RoomPaths.AddRange(newPaths);
+
+            if (dims == null) {
+                // the file ends before the dimensions: use the bounds of the vertices that were read
+                var fitted = new Dimensions();
+                if (Fit(fitted, vertexOffset)) dims = fitted;
+            }
+            if (dims != null) {
+                if (!append) Dimensions = dims;
+                else MergeDimensions(dims);
             }
             if (progress != null) progress.Value = stream.Length;
         }
 
-        static Block ReadBlock(BinaryReader r) {
-            var block = new Block();
+        static void ReadRoom(BinaryReader r, Room room) {
             uint perimeterCount = r.ReadUInt32();
-            uint attributeWords = r.ReadUInt32();
+            uint attributeSize = r.ReadUInt32();
             for (uint i = 0; i < perimeterCount; i++) {
                 int vertex = r.ReadUInt16();
-                int room = r.ReadUInt16();
-                block.Perimeter.Add(new PerimeterPoint(vertex, room - 1));
+                int connected = r.ReadUInt16();
+                room.Perimeter.Add(new PerimeterPoint(vertex, connected - 1));
             }
-            long end = r.BaseStream.Position + attributeWords * 2L;
+            long end = r.BaseStream.Position + attributeSize * 2L;
             int read = 0;
-            while (read < attributeWords) {
+            while (read < attributeSize) {
                 int id = r.ReadUInt16();
                 read++;
-                var attribute = BlockAttribute.Create(id);
-                read += attribute.Read(r, id & 7, (int)attributeWords - read);
-                block.Attributes.Add(attribute);
+                var attribute = RoomAttribute.Create(id);
+                read += attribute.Read(r, id & 7, (int)attributeSize - read);
+                room.Attributes.Add(attribute);
             }
             if (r.BaseStream.Position != end) r.BaseStream.Position = end;
-            return block;
         }
 
-        static RoadPath ReadRoad(BinaryReader r) {
-            var road = new RoadPath {
-                Unknown0 = r.ReadUInt16(),
-                Unknown1 = r.ReadUInt16()
-            };
+        static void ReadRoomPath(BinaryReader r, RoomPath path) {
+            path.Unknown4 = r.ReadUInt16();
+            path.Unknown5 = r.ReadUInt16();
             int forward = r.ReadByte();
             int backward = r.ReadByte();
-            for (int i = 0; i < forward; i++) road.ForwardLanes.Add(r.ReadSingle());
-            for (int i = 0; i < backward; i++) road.BackwardLanes.Add(r.ReadSingle());
-            road.Unknown2 = r.ReadUInt16();
-            for (int i = 0; i < 4; i++) road.StartVertices[i] = r.ReadUInt16();
-            for (int i = 0; i < 4; i++) road.EndVertices[i] = r.ReadUInt16();
-            int blocks = r.ReadByte();
-            for (int i = 0; i < blocks; i++) road.Blocks.Add(r.ReadUInt16() - 1);
-            return road;
+            for (int i = 0; i < forward; i++) path.ForwardLanes.Add(r.ReadSingle());
+            for (int i = 0; i < backward; i++) path.BackwardLanes.Add(r.ReadSingle());
+            path.Unknown6 = r.ReadUInt16();
+            for (int i = 0; i < 4; i++) path.StartCrossroads[i] = r.ReadUInt16();
+            for (int i = 0; i < 4; i++) path.EndCrossroads[i] = r.ReadUInt16();
+            int rooms = r.ReadByte();
+            for (int i = 0; i < rooms; i++) path.Rooms.Add(r.ReadUInt16() - 1);
+        }
+
+        /// <summary>Fits the bounding box and sphere to the vertices; keeps the old values when there are none.</summary>
+        public void FitDimensions() => Fit(Dimensions, 0);
+
+        /// <summary>Sets the dimensions to the bounds of the vertices from firstVertex on; false when there are none.</summary>
+        bool Fit(Dimensions d, int firstVertex) {
+            if (firstVertex >= Vertices.Count) return false;
+            d.Min = new Vector3(float.MaxValue);
+            d.Max = new Vector3(float.MinValue);
+            for (int i = firstVertex; i < Vertices.Count; i++) {
+                d.Min = Vector3.Min(d.Min, Vertices[i]);
+                d.Max = Vector3.Max(d.Max, Vertices[i]);
+            }
+            d.Center = (d.Min + d.Max) / 2;
+            d.Radius = (d.Max - d.Center).Length();
+            return true;
         }
 
         void MergeDimensions(Dimensions other) {
@@ -271,10 +330,10 @@ namespace PsdlViewer.Formats.Psdl {
         /// <summary>Writes the file. Like the original viewer, the output is always a Midtown Madness 2 (PSD0) file.</summary>
         public void Save(string path, Progress progress = null) {
             // validate everything first so that a failed save never leaves a truncated file behind
-            for (int i = 0; i < Blocks.Count; i++) {
-                for (int j = 0; j < Blocks[i].Attributes.Count; j++) {
-                    string error = Blocks[i].Attributes[j].Validate();
-                    if (error != null) throw new InvalidDataException($"Block {i:x}, attribute {j:x}: {error}");
+            for (int i = 0; i < Rooms.Count; i++) {
+                for (int j = 0; j < Rooms[i].Attributes.Count; j++) {
+                    string error = Rooms[i].Attributes[j].Validate();
+                    if (error != null) throw new InvalidDataException($"Room {i:x}, attribute {j:x}: {error}");
                 }
             }
             string temp = path + "#";
@@ -286,7 +345,7 @@ namespace PsdlViewer.Formats.Psdl {
         }
 
         public void Write(BinaryWriter w, Progress progress = null) {
-            progress?.Begin("Writing vertices", Blocks.Count + 1);
+            progress?.Begin("Writing vertices", Rooms.Count + 1);
             w.Write(BinaryUtil.Text.GetBytes("PSD0"));
             w.Write(TargetSize);
             w.Write((uint)Vertices.Count);
@@ -296,24 +355,24 @@ namespace PsdlViewer.Formats.Psdl {
             w.Write((uint)(Textures.Count + 1));
             foreach (string t in Textures) w.WriteLengthString(t);
 
-            if (progress != null) progress.Note = "Writing blocks";
-            w.Write((uint)(Blocks.Count + 1));
+            if (progress != null) progress.Note = "Writing rooms";
+            w.Write((uint)(Rooms.Count + 1));
             w.Write(Unknown0);
-            for (int i = 0; i < Blocks.Count; i++) {
-                var block = Blocks[i];
-                w.Write((uint)block.Perimeter.Count);
-                w.Write((uint)block.AttributeWords);
-                foreach (var p in block.Perimeter) {
+            for (int i = 0; i < Rooms.Count; i++) {
+                var room = Rooms[i];
+                w.Write((uint)room.Perimeter.Count);
+                w.Write((uint)room.AttributeSize);
+                foreach (var p in room.Perimeter) {
                     w.Write((ushort)p.Vertex);
-                    w.Write((ushort)(p.Block + 1));
+                    w.Write((ushort)(p.Room + 1));
                 }
-                foreach (var a in block.Attributes) a.Write(w);
+                foreach (var a in room.Attributes) a.Write(w);
                 if (progress != null) progress.Value = i;
             }
-            w.Write(DummyFlag);
-            foreach (var b in Blocks) w.Write((byte)b.Type);
+            w.Write(DummyRoomFlags);
+            foreach (var b in Rooms) w.Write((byte)b.Flags);
             w.Write(DummyPropRule);
-            foreach (var b in Blocks) w.Write((byte)b.PropRule);
+            foreach (var b in Rooms) w.Write((byte)b.PropRule);
 
             if (progress != null) progress.Note = "Writing dimensions";
             w.Write(Dimensions.Min);
@@ -321,58 +380,58 @@ namespace PsdlViewer.Formats.Psdl {
             w.Write(Dimensions.Center);
             w.Write(Dimensions.Radius);
 
-            if (progress != null) progress.Note = "Writing roads";
-            w.Write((uint)Roads.Count);
-            foreach (var road in Roads) {
-                w.Write((ushort)road.Unknown0);
-                w.Write((ushort)road.Unknown1);
-                w.Write((byte)road.ForwardLanes.Count);
-                w.Write((byte)road.BackwardLanes.Count);
-                foreach (float f in road.ForwardLanes) w.Write(f);
-                foreach (float f in road.BackwardLanes) w.Write(f);
-                w.Write((ushort)road.Unknown2);
-                foreach (int v in road.StartVertices) w.Write((ushort)v);
-                foreach (int v in road.EndVertices) w.Write((ushort)v);
-                w.Write((byte)road.Blocks.Count);
-                foreach (int b in road.Blocks) w.Write((ushort)(b + 1));
+            if (progress != null) progress.Note = "Writing room paths";
+            w.Write((uint)RoomPaths.Count);
+            foreach (var path in RoomPaths) {
+                w.Write((ushort)path.Unknown4);
+                w.Write((ushort)path.Unknown5);
+                w.Write((byte)path.ForwardLanes.Count);
+                w.Write((byte)path.BackwardLanes.Count);
+                foreach (float f in path.ForwardLanes) w.Write(f);
+                foreach (float f in path.BackwardLanes) w.Write(f);
+                w.Write((ushort)path.Unknown6);
+                foreach (int v in path.StartCrossroads) w.Write((ushort)v);
+                foreach (int v in path.EndCrossroads) w.Write((ushort)v);
+                w.Write((byte)path.Rooms.Count);
+                foreach (int b in path.Rooms) w.Write((ushort)(b + 1));
             }
             if (progress != null) progress.Value = progress.Maximum;
         }
 
-        // ---- block list maintenance (keeps every block reference consistent) ----
+        // ---- room list maintenance (keeps every room reference consistent) ----
 
-        /// <summary>Remaps block references after the block list changed. map[old] = new index, -1 if removed.</summary>
-        public void RemapBlockReferences(Func<int, int> map) {
-            foreach (var b in Blocks) {
+        /// <summary>Remaps room references after the room list changed. map[old] = new index, -1 if removed.</summary>
+        public void RemapRoomReferences(Func<int, int> map) {
+            foreach (var b in Rooms) {
                 foreach (var p in b.Perimeter) {
-                    if (p.Block >= 0) p.Block = map(p.Block);
+                    if (p.Room >= 0) p.Room = map(p.Room);
                 }
             }
-            foreach (var road in Roads) {
-                for (int i = road.Blocks.Count - 1; i >= 0; i--) {
-                    int m = map(road.Blocks[i]);
-                    if (m < 0) road.Blocks.RemoveAt(i);
-                    else road.Blocks[i] = m;
+            foreach (var path in RoomPaths) {
+                for (int i = path.Rooms.Count - 1; i >= 0; i--) {
+                    int m = map(path.Rooms[i]);
+                    if (m < 0) path.Rooms.RemoveAt(i);
+                    else path.Rooms[i] = m;
                 }
             }
         }
 
-        public void InsertBlock(int index, Block block) {
-            RemapBlockReferences(i => i >= index ? i + 1 : i);
-            Blocks.Insert(index, block);
+        public void InsertRoom(int index, Room room) {
+            RemapRoomReferences(i => i >= index ? i + 1 : i);
+            Rooms.Insert(index, room);
         }
 
-        public void RemoveBlock(int index) {
-            Blocks.RemoveAt(index);
-            RemapBlockReferences(i => i == index ? -1 : i > index ? i - 1 : i);
+        public void RemoveRoom(int index) {
+            Rooms.RemoveAt(index);
+            RemapRoomReferences(i => i == index ? -1 : i > index ? i - 1 : i);
         }
 
-        public void MoveBlock(int from, int to) {
+        public void MoveRoom(int from, int to) {
             if (from == to) return;
-            var block = Blocks[from];
-            Blocks.RemoveAt(from);
-            Blocks.Insert(to, block);
-            RemapBlockReferences(i => MoveMap(i, from, to));
+            var room = Rooms[from];
+            Rooms.RemoveAt(from);
+            Rooms.Insert(to, room);
+            RemapRoomReferences(i => MoveMap(i, from, to));
         }
 
         public static int MoveMap(int i, int from, int to) {
@@ -382,11 +441,11 @@ namespace PsdlViewer.Formats.Psdl {
             return i;
         }
 
-        public Vector3 BlockCenter(Block block) {
-            if (block.Perimeter.Count == 0) return Vector3.Zero;
+        public Vector3 RoomCenter(Room room) {
+            if (room.Perimeter.Count == 0) return Vector3.Zero;
             var sum = Vector3.Zero;
             int count = 0;
-            foreach (var p in block.Perimeter) {
+            foreach (var p in room.Perimeter) {
                 if (p.Vertex < 0 || p.Vertex >= Vertices.Count) continue;
                 sum += Vertices[p.Vertex];
                 count++;

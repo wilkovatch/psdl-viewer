@@ -23,7 +23,7 @@ namespace PsdlViewer.UI.Panels {
             table.AddColumn("ID", 56);
             table.AddColumn("Points", 56, false, HorizontalAlignment.Right);
             table.AddColumn("Lanes R/L", 70);
-            table.AddColumn("Blocks", 200);
+            table.AddColumn("Rooms", 200);
             table.CustomMinimumSize = new Vector2(100, 90);
             table.RowCount = () => Doc.Bai.Routes.Count;
             table.GetCell = (r, c) => {
@@ -33,7 +33,7 @@ namespace PsdlViewer.UI.Panels {
                     1 => route.Id.ToString("x"),
                     2 => route.Points.ToString(),
                     3 => $"{route.Right.Lanes}/{route.Left.Lanes}",
-                    _ => string.Join(" ", route.Blocks.Select(b => b.ToString("x")))
+                    _ => string.Join(" ", route.Rooms.Select(b => b.ToString("x")))
                 };
             };
             table.SelectionChanged += () => {
@@ -79,10 +79,10 @@ namespace PsdlViewer.UI.Panels {
             grid.AddFloat("Unknown 2:", () => route.Unknown2, v => route.Unknown2 = v, "Base speed?");
             grid.Changed += () => table.Refresh();
             routeBox.AddChild(grid);
-            var blocks = new ListEditor("Blocks");
-            blocks.BindInts(() => route.Blocks, ListEditor.BlockInfo, false, true, "Block");
-            blocks.Changed += () => table.Refresh();
-            routeBox.AddChild(blocks);
+            var rooms = new ListEditor("Rooms");
+            rooms.BindInts(() => route.Rooms, ListEditor.RoomInfo, false, true, "Room");
+            rooms.Changed += () => table.Refresh();
+            routeBox.AddChild(rooms);
             detail.AddChild(routeBox);
 
             var center = Table(n, ("Distance", At(route.CentralDistances)), ("Center", At(route.CentralLine)), ("X", At(route.XOrientation)),

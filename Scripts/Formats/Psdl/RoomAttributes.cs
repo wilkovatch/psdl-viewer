@@ -6,33 +6,33 @@ using System.Linq;
 namespace PsdlViewer.Formats.Psdl {
     /// <summary>Attribute type codes (bits 3-6 of the attribute id word).</summary>
     public static class AttributeType {
-        public const int Road = 0x0;
+        public const int RoadWithSidewalks = 0x0;
         public const int SidewalkStrip = 0x1;
-        public const int RoadNoSidewalk = 0x2;
+        public const int RoadWithoutSidewalks = 0x2;
         public const int Sliver = 0x3;
-        public const int Crosswalk = 0x4;
+        public const int CrosswalkRectangle = 0x4;
         public const int RoadTriangleFan = 0x5;
         public const int TriangleFan = 0x6;
         public const int FacadeBound = 0x7;
         public const int DividedRoad = 0x8;
         public const int Tunnel = 0x9;
-        public const int Texture = 0xa;
+        public const int TextureReference = 0xa;
         public const int Facade = 0xb;
         public const int RoofTriangleFan = 0xc;
 
         public static string Name(int type) {
             switch (type) {
-                case Road: return "Road strip";
+                case RoadWithSidewalks: return "Road with sidewalks";
                 case SidewalkStrip: return "Sidewalk strip";
-                case RoadNoSidewalk: return "Rectangle strip (road without sidewalks)";
+                case RoadWithoutSidewalks: return "Road without sidewalks";
                 case Sliver: return "Sliver";
-                case Crosswalk: return "Crosswalk rectangle";
+                case CrosswalkRectangle: return "Crosswalk rectangle";
                 case RoadTriangleFan: return "Road triangle fan";
                 case TriangleFan: return "Triangle fan";
                 case FacadeBound: return "Facade bound";
-                case DividedRoad: return "Divided road strip";
+                case DividedRoad: return "Divided road";
                 case Tunnel: return "Tunnel/railing";
-                case Texture: return "Texture";
+                case TextureReference: return "Texture reference";
                 case Facade: return "Facade";
                 case RoofTriangleFan: return "Roof triangle fan";
                 default: return "Unknown";
@@ -41,9 +41,9 @@ namespace PsdlViewer.Formats.Psdl {
     }
 
     /// <summary>
-    /// One room (block) attribute. The id word is: bit 7 = last attribute, bits 3-6 = type, bits 0-2 = subtype.
+    /// One room attribute. The id word is: bit 7 = last attribute, bits 3-6 = type, bits 0-2 = subtype.
     /// </summary>
-    public abstract class BlockAttribute {
+    public abstract class RoomAttribute {
         public bool Last;
 
         public abstract int Type { get; }
@@ -71,8 +71,8 @@ namespace PsdlViewer.Formats.Psdl {
         public virtual void AddOffsets(int vertexOffset, int heightOffset, int textureOffset) { }
         public virtual IEnumerable<int> VertexRefs => Enumerable.Empty<int>();
 
-        public BlockAttribute Clone() {
-            var copy = (BlockAttribute)MemberwiseClone();
+        public RoomAttribute Clone() {
+            var copy = (RoomAttribute)MemberwiseClone();
             copy.CloneLists();
             return copy;
         }
@@ -85,24 +85,24 @@ namespace PsdlViewer.Formats.Psdl {
 
         public virtual string Describe() => Name;
 
-        public static BlockAttribute Create(int id) {
+        public static RoomAttribute Create(int id) {
             int type = (id & 0x7f) >> 3;
             int subtype = id & 7;
-            BlockAttribute a;
+            RoomAttribute a;
             switch (type) {
-                case AttributeType.Road: a = new StripAttribute(type, 4); break;
+                case AttributeType.RoadWithSidewalks: a = new StripAttribute(type, 4); break;
                 case AttributeType.SidewalkStrip: a = new StripAttribute(type, 2); break;
-                case AttributeType.RoadNoSidewalk: a = new StripAttribute(type, 2); break;
+                case AttributeType.RoadWithoutSidewalks: a = new StripAttribute(type, 2); break;
                 case AttributeType.Sliver: a = subtype == 4 ? new SliverAttribute() : null; break;
-                case AttributeType.Crosswalk: a = new CrosswalkAttribute(); break;
+                case AttributeType.CrosswalkRectangle: a = new CrosswalkRectangleAttribute(); break;
                 case AttributeType.RoadTriangleFan: a = new FanAttribute(type); break;
                 case AttributeType.TriangleFan: a = new FanAttribute(type); break;
                 case AttributeType.FacadeBound: a = subtype == 4 ? new FacadeBoundAttribute() : null; break;
                 case AttributeType.DividedRoad: a = new DividedRoadAttribute(); break;
                 case AttributeType.Tunnel: a = new TunnelAttribute(); break;
-                case AttributeType.Texture: a = new TextureAttribute(); break;
+                case AttributeType.TextureReference: a = new TextureReferenceAttribute(); break;
                 case AttributeType.Facade: a = subtype == 6 ? new FacadeAttribute() : null; break;
-                case AttributeType.RoofTriangleFan: a = new RoofAttribute(); break;
+                case AttributeType.RoofTriangleFan: a = new RoofTriangleFanAttribute(); break;
                 default: a = null; break;
             }
             a ??= new RawAttribute(type, subtype);
@@ -119,15 +119,15 @@ namespace PsdlViewer.Formats.Psdl {
             void Add(int lo, int hi, string text) {
                 lines.Add(lo == hi ? $"{lo:x4} {text}" : $"{lo:x4}-{hi:x4} {text}");
             }
-            Add(0x00, 0x07, "Road strip (sidewalks on both sides, 4 vertices per cross section)");
+            Add(0x00, 0x07, "Road with sidewalks (4 vertices per cross section)");
             Add(0x08, 0x0f, "Sidewalk strip (2 vertices per cross section)");
-            Add(0x10, 0x17, "Rectangle strip / road without sidewalks (2 vertices per cross section)");
+            Add(0x10, 0x17, "Road without sidewalks (2 vertices per cross section)");
             Add(0x1c, 0x1c, "Sliver");
             Add(0x24, 0x24, "Crosswalk rectangle");
             Add(0x28, 0x2f, "Road triangle fan");
             Add(0x30, 0x37, "Triangle fan");
             Add(0x3c, 0x3c, "Facade bound");
-            Add(0x40, 0x47, "Divided road strip (6 vertices per cross section)");
+            Add(0x40, 0x47, "Divided road (6 vertices per cross section)");
             Add(0x48, 0x48, "Junction tunnel/railing");
             Add(0x49, 0x4f, "Road tunnel/railing (0x4b is the common one)");
             Add(0x50, 0x57, "Texture reference (index = data + 256 * subtype - 1)");
@@ -141,7 +141,7 @@ namespace PsdlViewer.Formats.Psdl {
     }
 
     /// <summary>Attribute whose size is encoded in the subtype, or in an extra count word when the subtype is 0.</summary>
-    public abstract class CountedAttribute : BlockAttribute {
+    public abstract class CountedAttribute : RoomAttribute {
         public List<int> Vertices = new();
         /// <summary>True when the count is stored in an explicit word (subtype 0) instead of the subtype.</summary>
         public bool ExplicitCount;
@@ -185,7 +185,7 @@ namespace PsdlViewer.Formats.Psdl {
         }
     }
 
-    /// <summary>Road strip (0x00), sidewalk strip (0x08) and rectangle strip (0x10): cross sections of N vertices.</summary>
+    /// <summary>Road with sidewalks (0x00), sidewalk strip (0x08) and road without sidewalks (0x10): cross sections of N vertices.</summary>
     public class StripAttribute : CountedAttribute {
         readonly int type;
         public readonly int VerticesPerSection;
@@ -222,15 +222,15 @@ namespace PsdlViewer.Formats.Psdl {
     }
 
     public class DividedRoadAttribute : CountedAttribute {
-        public const int DividerInvisible = 0, DividerFlat = 1, DividerElevated = 2, DividerWedge = 3;
+        public const int DividerInvisible = 0, DividerFlat = 1, DividerElevated = 2, DividerWedged = 3;
         public const int FlagUnknown0 = 4, FlagUnknown1 = 8, FlagUnknown2 = 16, FlagUnknown3 = 32, FlagCloseStart = 64, FlagCloseEnd = 128;
-        public static readonly string[] DividerNames = { "Invisible", "Flat", "Flat, elevated", "Wedge" };
+        public static readonly string[] DividerNames = { "Invisible", "Flat", "Elevated", "Wedged" };
 
         /// <summary>Low byte of the parameter word: bits 0-1 divider type, the rest flags.</summary>
         public int FlagsByte;
         /// <summary>Index in the texture list (stored in the file as index + 1).</summary>
         public int DividerTexture = -1;
-        /// <summary>Raw divider value; height (or texture repeat) in metres * 256.</summary>
+        /// <summary>Raw divider value in units of 1/256; texture repeat for flat dividers, height for elevated ones.</summary>
         public int Value;
 
         public override int Type => AttributeType.DividedRoad;
@@ -241,7 +241,8 @@ namespace PsdlViewer.Formats.Psdl {
         public int DividerType { get => FlagsByte & 3; set => FlagsByte = (FlagsByte & ~3) | (value & 3); }
         public bool GetFlag(int flag) => (FlagsByte & flag) != 0;
         public void SetFlag(int flag, bool on) => FlagsByte = on ? FlagsByte | flag : FlagsByte & ~flag;
-        public float Height { get => Value / 256f; set => Value = Math.Clamp((int)(value * 256f + 0.5f), 0, 0xffff); }
+        /// <summary>Value / 256: texture repeat count (flat) or height and side strip width in metres (elevated).</summary>
+        public float ScaledValue { get => Value / 256f; set => Value = Math.Clamp((int)(value * 256f + 0.5f), 0, 0xffff); }
 
         public override int Read(BinaryReader r, int subtype, int remainingWords) {
             int words = 0;
@@ -306,7 +307,7 @@ namespace PsdlViewer.Formats.Psdl {
     }
 
     /// <summary>Roof triangle fan (0x60): a fan whose y coordinates are replaced by a height.</summary>
-    public class RoofAttribute : CountedAttribute {
+    public class RoofTriangleFanAttribute : CountedAttribute {
         public int HeightRef;
 
         public override int Type => AttributeType.RoofTriangleFan;
@@ -337,12 +338,12 @@ namespace PsdlViewer.Formats.Psdl {
         public override string Describe() => $"{Name} ({Vertices.Count} vertices)";
     }
 
-    public class CrosswalkAttribute : CountedAttribute {
-        public CrosswalkAttribute() {
+    public class CrosswalkRectangleAttribute : CountedAttribute {
+        public CrosswalkRectangleAttribute() {
             Vertices.AddRange(new[] { 0, 0, 0, 0 });
         }
 
-        public override int Type => AttributeType.Crosswalk;
+        public override int Type => AttributeType.CrosswalkRectangle;
         protected override int EncodedCount => Vertices.Count;
         public override int BodyWords => (Subtype == 0 ? 1 : 0) + Vertices.Count;
 
@@ -362,7 +363,7 @@ namespace PsdlViewer.Formats.Psdl {
     }
 
     /// <summary>Base for the fixed-size attributes that end with two vertex references.</summary>
-    public abstract class TwoVertexAttribute : BlockAttribute {
+    public abstract class TwoVertexAttribute : RoomAttribute {
         public List<int> Vertices = new() { 0, 0 };
         public override IEnumerable<int> VertexRefs => Vertices;
 
@@ -475,11 +476,11 @@ namespace PsdlViewer.Formats.Psdl {
         }
     }
 
-    /// <summary>Texture reference: index = data + 256 * subtype - 1. Index -1 hides the following geometry.</summary>
-    public class TextureAttribute : BlockAttribute {
+    /// <summary>Texture reference: index = data + 256 * subtype - 1. Index -1 prevents rendering and collision of the following geometry.</summary>
+    public class TextureReferenceAttribute : RoomAttribute {
         public int Index = -1;
 
-        public override int Type => AttributeType.Texture;
+        public override int Type => AttributeType.TextureReference;
         public override int Subtype => Math.Clamp((Index + 1) >> 8, 0, 7);
         public override int BodyWords => 1;
 
@@ -498,15 +499,15 @@ namespace PsdlViewer.Formats.Psdl {
         }
 
         public override string Validate() => Index < -1 || Index + 1 >= 8 * 256 ? "texture index out of range" : null;
-        public override string Describe() => Index < 0 ? "Texture: none" : $"Texture: {Index:x}";
+        public override string Describe() => Index < 0 ? "Texture reference: none" : $"Texture reference: {Index:x}";
     }
 
     /// <summary>
-    /// Tunnel/railing. Subtype 0 is the junction variant (an explicit size word follows the id),
-    /// other subtypes give the number of data words directly.
+    /// Road tunnel/railing (subtype = number of data words) or junction tunnel/railing (subtype 0, an explicit size word follows the id).
     /// </summary>
-    public class TunnelAttribute : BlockAttribute {
-        public const int LeftSide = 1, RightSide = 2, Wall = 4, FlatCeiling = 8;
+    public class TunnelAttribute : RoomAttribute {
+        /// <summary>Flag bits. StyleWall is the "style" bit: railing when clear, wall when set.</summary>
+        public const int LeftSide = 1, RightSide = 2, StyleWall = 4, FlatCeiling = 8;
         public const int ClosedStartLeft = 16, ClosedEndLeft = 32, ClosedStartRight = 64, ClosedEndRight = 128;
         public const int CurvedCeiling = 256, OffsetStartLeft = 512, OffsetEndLeft = 1024, OffsetStartRight = 2048, OffsetEndRight = 4096;
         public const int CurvedSides = 8192, Culled = 16384, Unknown = 32768;
@@ -543,7 +544,8 @@ namespace PsdlViewer.Formats.Psdl {
         /// <summary>Height in metres * 256.</summary>
         public int RawHeight { get => Word(1); set => SetWord(1, value); }
         public float Height { get => RawHeight / 256f; set => RawHeight = Math.Clamp((int)(value * 256f + 0.5f), 0, 0xffff); }
-        public int Unknown2 { get => Word(2); set => SetWord(2, value); }
+        /// <summary>Second unknown value (missing in subtype 2 road tunnels).</summary>
+        public int UnknownValue { get => Word(2); set => SetWord(2, value); }
         /// <summary>Junction only: perimeter index where the ceiling fan starts.</summary>
         public int CeilingFanOrigin { get => Word(3); set => SetWord(3, value); }
 
@@ -580,7 +582,7 @@ namespace PsdlViewer.Formats.Psdl {
     }
 
     /// <summary>Attribute of an unknown type; keeps the raw words (Java viewer behaviour: consumes the rest of the list).</summary>
-    public class RawAttribute : BlockAttribute {
+    public class RawAttribute : RoomAttribute {
         readonly int type;
         int subtype;
         public List<int> Words = new();

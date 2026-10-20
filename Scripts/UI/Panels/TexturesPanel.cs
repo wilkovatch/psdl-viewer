@@ -7,7 +7,7 @@ using PsdlViewer.Formats.Psdl;
 using PsdlViewer.Render;
 
 namespace PsdlViewer.UI.Panels {
-    /// <summary>Texture list with image previews (TextureListView/TextureView). Follows the block selection.</summary>
+    /// <summary>Texture list with image previews (TextureListView/TextureView). Follows the room selection.</summary>
     public partial class TexturesPanel : DockPanel {
         public override string Kind => "Textures";
         readonly VirtualTable table = new();
@@ -63,12 +63,12 @@ namespace PsdlViewer.UI.Panels {
             Subscribe(() => {
                 Doc.PsdlReplaced += OnReplaced;
                 Doc.DataChanged += OnDataChanged;
-                Doc.BlocksSelected += OnBlocksSelected;
+                Doc.RoomsSelected += OnRoomsSelected;
                 Settings.Changed += OnReplaced;
             }, () => {
                 Doc.PsdlReplaced -= OnReplaced;
                 Doc.DataChanged -= OnDataChanged;
-                Doc.BlocksSelected -= OnBlocksSelected;
+                Doc.RoomsSelected -= OnRoomsSelected;
                 Settings.Changed -= OnReplaced;
             });
         }
@@ -114,12 +114,12 @@ namespace PsdlViewer.UI.Panels {
             if (kind == DataKind.Textures) table.Refresh();
         }
 
-        /// <summary>Selects the textures referenced by the first selected block.</summary>
-        void OnBlocksSelected(int[] blocks, object source) {
-            if (blocks.Length == 0 || blocks[0] >= Doc.Psdl.Blocks.Count) return;
+        /// <summary>Selects the textures referenced by the first selected room.</summary>
+        void OnRoomsSelected(int[] rooms, object source) {
+            if (rooms.Length == 0 || rooms[0] >= Doc.Psdl.Rooms.Count) return;
             var rows = new List<int>();
-            foreach (var a in Doc.Psdl.Blocks[blocks[0]].Attributes) {
-                if (a is TextureAttribute t && t.Index >= 0 && t.Index < Doc.Psdl.Textures.Count) rows.Add(t.Index);
+            foreach (var a in Doc.Psdl.Rooms[rooms[0]].Attributes) {
+                if (a is TextureReferenceAttribute t && t.Index >= 0 && t.Index < Doc.Psdl.Textures.Count) rows.Add(t.Index);
                 if (a is DividedRoadAttribute d && d.DividerTexture >= 0 && d.DividerTexture < Doc.Psdl.Textures.Count) rows.Add(d.DividerTexture);
             }
             table.Select(rows.Distinct());

@@ -95,6 +95,13 @@ namespace PsdlViewer.Formats {
         }
     }
 
+    /// <summary>Load trace of the file readers; the original viewer printed it to the terminal. Output must be thread safe.</summary>
+    public static class FileLog {
+        public static Action<string> Output;
+
+        public static void Print(string text) => Output?.Invoke(text);
+    }
+
     /// <summary>Thread-safe progress shared between background loaders and the UI.</summary>
     public class Progress {
         volatile string note = "";

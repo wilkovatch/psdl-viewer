@@ -40,9 +40,11 @@ namespace PsdlViewer.Formats {
         public static Pathset Load(string path) {
             using var stream = File.OpenRead(path);
             using var r = new BinaryReader(stream);
+            FileLog.Print($"Reading pathset file {path}");
             if (r.ReadMagic() != "PTH1") throw new InvalidDataException("Not a pathset file.");
             var set = new Pathset { FileName = path };
             uint n = r.ReadUInt32();
+            FileLog.Print($"{n} paths");
             set.CurrentPath = r.ReadUInt32();
             for (uint i = 0; i < n; i++) {
                 byte[] raw = r.ReadBytes(32);

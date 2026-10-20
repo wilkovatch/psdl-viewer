@@ -10,6 +10,8 @@ namespace PsdlViewer.Render {
         public string Key;
         public PkgFile Pkg;
         public List<(PkgShader shader, TextureEntry texture, Vector3[] pos, Vector3[] nrm, Vector2[] uv)> Surfaces = new();
+        /// <summary>Bounding box of all surfaces in object space.</summary>
+        public Aabb Bounds;
         public ArrayMesh Mesh;
     }
 
@@ -85,6 +87,14 @@ namespace PsdlViewer.Render {
                 }
                 var texture = s.Shader.IsTextured ? TextureStore.Get(s.Shader.Texture) : null;
                 data.Surfaces.Add((s.Shader, texture, pos, nrm, uv));
+            }
+            bool first = true;
+            foreach (var surface in data.Surfaces) {
+                foreach (var p in surface.pos) {
+                    if (first) data.Bounds = new Aabb(p, Vector3.Zero);
+                    else data.Bounds = data.Bounds.Expand(p);
+                    first = false;
+                }
             }
             lock (sync) {
                 if (meshes.TryGetValue(key, out var other)) return other;

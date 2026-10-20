@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Godot;
 
 namespace PsdlViewer.Core {
@@ -13,6 +14,8 @@ namespace PsdlViewer.Core {
         public static readonly string[] DrawingNames = { "Lines", "Fill" };
         public static readonly string[] LightingNames = { "Unlit", "Lit" };
         public static readonly string[] ColouringNames = { "Grey indexed", "Random", "Texture indexed", "Texture map" };
+        public const int CameraSchemeA = 0, CameraSchemeB = 1;
+        public static readonly string[] CameraControlNames = { "Scheme A", "Scheme B" };
 
         public string OpenPath = "";
         public string SavePath = "";
@@ -22,16 +25,21 @@ namespace PsdlViewer.Core {
         public int DrawingMode = DrawingFill;
         public int LightingMode = LightingUnlit;
         public int ColouringMode = ColouringTextureMap;
-        public bool ShowBlockIndices;
-        public bool RenderBlockAttributes = true;
-        public bool ShowBlockBounds = true;
+        // JSON names kept from when rooms were called blocks, so existing settings files still load
+        [JsonPropertyName("ShowBlockIndices")] public bool ShowRoomIndices;
+        [JsonPropertyName("RenderBlockAttributes")] public bool RenderRoomAttributes = true;
+        [JsonPropertyName("ShowBlockBounds")] public bool ShowRoomBounds = true;
         public bool ShowCityBounds;
         public bool RenderInst = true;
         public bool ShowPathsets = true;
         public bool ShowBai = true;
         public float LabelSize = 3;
         public bool UseNativeFileDialogs = true;
+        public bool LoadSiblingInst;
+        public bool LoadSiblingBai;
         public float CameraFov = 60;
+        public int CameraControls = CameraSchemeA;
+        public bool EmulateMiddleButton;
         public float BackgroundBrightness = 0.08f;
 
         public static Settings Current { get; private set; } = new();

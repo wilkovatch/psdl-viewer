@@ -6,7 +6,7 @@ using PsdlViewer.Core;
 using PsdlViewer.Formats;
 
 namespace PsdlViewer.UI {
-    /// <summary>Titled editable list of numbers (vertex references, block references, lanes, raw words...).</summary>
+    /// <summary>Titled editable list of numbers (vertex references, room references, lanes, raw words...).</summary>
     public partial class ListEditor : VBoxContainer {
         public readonly VirtualTable Table = new();
         public event Action Changed;
@@ -150,6 +150,6 @@ namespace PsdlViewer.UI {
             return Doc.Psdl.TextureAt(t) ?? (t < Doc.Psdl.Textures.Count ? "(empty)" : "missing");
         }
 
-        public static string BlockInfo(int b) => b < 0 ? "-" : b < Doc.Psdl.Blocks.Count ? Doc.Psdl.Blocks[b].TypeText() : "missing";
+        public static string RoomInfo(int b) => b < 0 ? "-" : b < Doc.Psdl.Rooms.Count ? Doc.Psdl.Rooms[b].FlagsText() : "missing";
     }
 }

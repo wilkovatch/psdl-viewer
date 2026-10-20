@@ -7,9 +7,9 @@ using PsdlViewer.Formats;
 using PsdlViewer.Formats.Psdl;
 
 namespace PsdlViewer.UI.Panels {
-    /// <summary>Block (room) list with the perimeter and attribute editors (BlockListView/BlockView).</summary>
-    public partial class BlocksPanel : DockPanel {
-        public override string Kind => "Blocks";
+    /// <summary>Room list with the perimeter and attribute editors (BlockListView/BlockView).</summary>
+    public partial class RoomsPanel : DockPanel {
+        public override string Kind => "Rooms";
 
         readonly VirtualTable table = new();
         readonly VirtualTable perimeter = new();
@@ -19,18 +19,18 @@ namespace PsdlViewer.UI.Panels {
         readonly LineEdit findAttribute = new() { PlaceholderText = "attribute id (hex)", CustomMinimumSize = new Vector2(120, 0) };
         readonly LineEdit findTexture = new() { PlaceholderText = "texture index (hex)", CustomMinimumSize = new Vector2(120, 0) };
         readonly TabContainer detail = new() { SizeFlagsVertical = SizeFlags.ExpandFill };
-        Block current;
+        Room current;
         int currentIndex = -1;
-        bool syncing;
+        bool syncing, syncingAttributes;
 
         static PsdlFile Psdl => Doc.Psdl;
 
-        public BlocksPanel() {
+        public RoomsPanel() {
             var find = new HBoxContainer();
             find.AddChild(new Label { Text = "Find:" });
             find.AddChild(findAttribute);
             find.AddChild(findTexture);
-            find.AddChild(ToolButton("Find", () => FindNext(true), "Find the first block containing the attribute or texture"));
+            find.AddChild(ToolButton("Find", () => FindNext(true), "Find the first room containing the attribute or texture"));
             find.AddChild(ToolButton("Find next", () => FindNext(false)));
             findAttribute.TextSubmitted += _ => FindNext(true);
             findTexture.TextSubmitted += _ => FindNext(true);
@@ -44,11 +44,11 @@ namespace PsdlViewer.UI.Panels {
             table.SizeFlagsVertical = SizeFlags.Fill;
             table.CustomMinimumSize = new Vector2(120, 230);
 
-            var typeBox = new VBoxContainer { Name = "Block" };
+            var typeBox = new VBoxContainer { Name = "Room" };
             typeBox.AddChild(typeGrid);
             detail.AddChild(typeBox);
             var perimeterBox = new VBoxContainer { Name = "Perimeter" };
-            perimeterBox.AddChild(new Label { Text = "Vertex, connecting block (drag vertices here from a vertex list)", Modulate = new Color(1, 1, 1, 0.7f) });
+            perimeterBox.AddChild(new Label { Text = "Vertex, connected room (drag vertices here from a vertex list)", Modulate = new Color(1, 1, 1, 0.7f) });
             BuildPerimeter();
             perimeterBox.AddChild(perimeter);
             detail.AddChild(perimeterBox);
@@ -65,28 +65,30 @@ namespace PsdlViewer.UI.Panels {
             Subscribe(() => {
                 Doc.PsdlReplaced += OnReplaced;
                 Doc.DataChanged += OnDataChanged;
-                Doc.BlocksSelected += OnBlocksSelected;
+                Doc.RoomsSelected += OnRoomsSelected;
+                Doc.RoomAttributesSelected += OnRoomAttributesSelected;
             }, () => {
                 Doc.PsdlReplaced -= OnReplaced;
                 Doc.DataChanged -= OnDataChanged;
-                Doc.BlocksSelected -= OnBlocksSelected;
+                Doc.RoomsSelected -= OnRoomsSelected;
+                Doc.RoomAttributesSelected -= OnRoomAttributesSelected;
             });
         }
 
         void BuildTable() {
             table.AddColumn("Index", 50);
-            table.AddColumn("Type", 46, true);
-            table.AddColumn("Flags", 130);
+            table.AddColumn("Flags", 46, true);
+            table.AddColumn("Type", 130);
             table.AddColumn("Prop rule", 64, true);
             table.AddColumn("Perimeter", 64, false, HorizontalAlignment.Right);
             table.AddColumn("Attributes", 70, false, HorizontalAlignment.Right);
-            table.RowCount = () => Psdl.Blocks.Count;
+            table.RowCount = () => Psdl.Rooms.Count;
             table.GetCell = (r, c) => {
-                var b = Psdl.Blocks[r];
+                var b = Psdl.Rooms[r];
                 return c switch {
                     0 => r.ToString("x"),
-                    1 => b.Type.ToString("x2"),
-                    2 => b.TypeText(),
+                    1 => b.Flags.ToString("x2"),
+                    2 => b.FlagsText(),
                     3 => b.PropRule.ToString("x2"),
                     4 => b.Perimeter.Count.ToString(),
                     _ => b.Attributes.Count.ToString()
@@ -94,59 +96,59 @@ namespace PsdlViewer.UI.Panels {
             };
             table.SetCell = (r, c, text) => {
                 if (!BinaryUtil.TryParseHex(text, out int v) || v < 0 || v > 255) return "Enter a hexadecimal value between 0 and ff.";
-                if (c == 1) Psdl.Blocks[r].Type = v;
-                else Psdl.Blocks[r].PropRule = v;
+                if (c == 1) Psdl.Rooms[r].Flags = v;
+                else Psdl.Rooms[r].PropRule = v;
                 typeGrid.Refresh();
                 return null;
             };
             table.SelectionChanged += () => {
-                ShowBlock(table.SelectedRow);
+                ShowRoom(table.SelectedRow);
                 if (syncing) return;
                 syncing = true;
-                Doc.SelectBlocks(table.SelectedRows, this);
+                Doc.SelectRooms(table.SelectedRows, this);
                 syncing = false;
             };
             table.ContextMenu = () => {
                 int[] sel = table.SelectedRows;
                 return new List<(string, Action, bool)> {
-                    ("Add last", () => AddBlock(Psdl.Blocks.Count), true),
-                    ("Add before", () => AddBlock(sel.Length > 0 ? sel[0] : 0), true),
-                    ("Add after", () => AddBlock(sel.Length > 0 ? sel[^1] + 1 : 0), true),
-                    ("Remove", () => Dialogs.Confirm($"Remove {sel.Length} block(s)? References to them are cleared and their INST objects are removed.", () => {
-                        foreach (int r in sel.OrderByDescending(r => r)) Doc.RemoveBlock(r);
+                    ("Add last", () => AddRoom(Psdl.Rooms.Count), true),
+                    ("Add before", () => AddRoom(sel.Length > 0 ? sel[0] : 0), true),
+                    ("Add after", () => AddRoom(sel.Length > 0 ? sel[^1] + 1 : 0), true),
+                    ("Remove", () => Dialogs.Confirm($"Remove {sel.Length} room(s)? References to them are cleared and their INST objects are removed.", () => {
+                        foreach (int r in sel.OrderByDescending(r => r)) Doc.RemoveRoom(r);
                         table.ClearSelection();
-                        Changed(DataKind.Blocks, DataKind.Inst);
+                        Changed(DataKind.Rooms, DataKind.Inst);
                     }), sel.Length > 0),
                     ("-", null, true),
                     ("Move up", () => Move(sel, -1), sel.Length == 1 && sel[0] > 0),
-                    ("Move down", () => Move(sel, 1), sel.Length == 1 && sel[0] < Psdl.Blocks.Count - 1),
-                    ("Find blocks...", () => findAttribute.GrabFocus(), true)
+                    ("Move down", () => Move(sel, 1), sel.Length == 1 && sel[0] < Psdl.Rooms.Count - 1),
+                    ("Find rooms...", () => findAttribute.GrabFocus(), true)
                 };
             };
         }
 
-        void AddBlock(int index) {
-            Doc.InsertBlock(Math.Clamp(index, 0, Psdl.Blocks.Count), new Block());
-            Changed(DataKind.Blocks, DataKind.Inst);
+        void AddRoom(int index) {
+            Doc.InsertRoom(Math.Clamp(index, 0, Psdl.Rooms.Count), new Room());
+            Changed(DataKind.Rooms, DataKind.Inst);
             table.Select(new[] { index });
         }
 
         void Move(int[] sel, int delta) {
             int to = sel[0] + delta;
-            Doc.MoveBlock(sel[0], to);
-            Changed(DataKind.Blocks, DataKind.Inst);
+            Doc.MoveRoom(sel[0], to);
+            Changed(DataKind.Rooms, DataKind.Inst);
             table.Select(new[] { to });
         }
 
         void Changed(params DataKind[] kinds) {
             foreach (var k in kinds) Doc.NotifyChanged(k);
-            Doc.Status("Block data changed. Use View > Refresh blocks (Ctrl+R) to update the 3D view.");
+            Doc.Status("Room data changed. Use View > Refresh rooms (Ctrl+R) to update the 3D view.");
         }
 
         void BuildPerimeter() {
             perimeter.AddColumn("Index", 50);
             perimeter.AddColumn("Vertex", 64, true);
-            perimeter.AddColumn("Block", 64, true);
+            perimeter.AddColumn("Room", 64, true);
             perimeter.AddColumn("Position", 200);
             perimeter.RowCount = () => current?.Perimeter.Count ?? 0;
             perimeter.GetCell = (r, c) => {
@@ -154,20 +156,20 @@ namespace PsdlViewer.UI.Panels {
                 return c switch {
                     0 => r.ToString("x"),
                     1 => BinaryUtil.Hex(p.Vertex),
-                    2 => p.Block < 0 ? "-" : BinaryUtil.Hex(p.Block),
+                    2 => p.Room < 0 ? "-" : BinaryUtil.Hex(p.Room),
                     _ => ListEditor.VertexInfo(p.Vertex)
                 };
             };
             perimeter.SetCell = (r, c, text) => {
                 var p = current.Perimeter[r];
                 if (c == 2 && (text.Trim() == "-" || text.Trim() == "")) {
-                    p.Block = -1;
+                    p.Room = -1;
                 } else {
                     if (!BinaryUtil.TryParseHex(text, out int v)) return $"\"{text}\" is not a hexadecimal number.";
                     if (c == 1) p.Vertex = v;
-                    else p.Block = v >= 0xffff ? -1 : v;
+                    else p.Room = v >= 0xffff ? -1 : v;
                 }
-                Changed(DataKind.Blocks);
+                Changed(DataKind.Rooms);
                 return null;
             };
             perimeter.SelectionChanged += () => {
@@ -187,7 +189,7 @@ namespace PsdlViewer.UI.Panels {
                         foreach (int r in sel.OrderByDescending(r => r)) current.Perimeter.RemoveAt(r);
                         perimeter.ClearSelection(false);
                         perimeter.Refresh();
-                        Changed(DataKind.Blocks);
+                        Changed(DataKind.Rooms);
                     }, ok && sel.Length > 0)
                 };
             };
@@ -196,14 +198,14 @@ namespace PsdlViewer.UI.Panels {
                 int at = Math.Min(row, current.Perimeter.Count);
                 foreach (int v in (int[])p.Data) current.Perimeter.Insert(at++, new PerimeterPoint(v, -1));
                 perimeter.Refresh();
-                Changed(DataKind.Blocks);
+                Changed(DataKind.Rooms);
             };
         }
 
         void InsertPerimeter(int index) {
             current.Perimeter.Insert(Math.Clamp(index, 0, current.Perimeter.Count), new PerimeterPoint(0, -1));
             perimeter.Refresh();
-            Changed(DataKind.Blocks);
+            Changed(DataKind.Rooms);
         }
 
         void BuildAttributes() {
@@ -219,7 +221,7 @@ namespace PsdlViewer.UI.Panels {
                     _ => a.ToString()
                 };
             };
-            attributes.RowColor = r => current.Attributes[r] is TextureAttribute ? new Color(0.75f, 0.85f, 1f) : null;
+            attributes.RowColor = r => current.Attributes[r] is TextureReferenceAttribute ? new Color(0.75f, 0.85f, 1f) : null;
             attributes.SelectionChanged += ShowAttribute;
             attributes.ContextMenu = () => {
                 int[] sel = attributes.SelectedRows;
@@ -232,13 +234,13 @@ namespace PsdlViewer.UI.Panels {
                         foreach (int r in sel.OrderByDescending(r => r)) current.Attributes.RemoveAt(r);
                         attributes.ClearSelection();
                         attributes.Refresh();
-                        Changed(DataKind.Blocks);
+                        Changed(DataKind.Rooms);
                     }, ok && sel.Length > 0),
                     ("Duplicate", () => {
                         int at = sel[^1] + 1;
                         foreach (int r in sel.Reverse()) current.Attributes.Insert(at, current.Attributes[r].Clone());
                         attributes.Refresh();
-                        Changed(DataKind.Blocks);
+                        Changed(DataKind.Rooms);
                     }, ok && sel.Length > 0),
                     ("-", null, true),
                     ("Move up", () => MoveAttribute(sel[0], -1), ok && sel.Length == 1 && sel[0] > 0),
@@ -248,20 +250,20 @@ namespace PsdlViewer.UI.Panels {
         }
 
         void AddAttribute(int index) {
-            var block = current;
-            Dialogs.Input("Add block attribute", "Attribute ID (hex):", "50", text => {
+            var room = current;
+            Dialogs.Input("Add room attribute", "Attribute ID (hex):", "50", text => {
                 if (!BinaryUtil.TryParseHex(text, out int id) || id < 0 || id > 0x7f) {
                     Dialogs.Error("Enter an attribute id between 0 and 7f.");
                     return;
                 }
-                if (block != current) return;
-                var a = BlockAttribute.Create(id);
-                int at = Math.Clamp(index, 0, block.Attributes.Count);
-                block.Attributes.Insert(at, a);
+                if (room != current) return;
+                var a = RoomAttribute.Create(id);
+                int at = Math.Clamp(index, 0, room.Attributes.Count);
+                room.Attributes.Insert(at, a);
                 attributes.Refresh();
                 attributes.Select(new[] { at });
-                Changed(DataKind.Blocks);
-            }, BlockAttribute.KnownAttributesText());
+                Changed(DataKind.Rooms);
+            }, RoomAttribute.KnownAttributesText());
         }
 
         void MoveAttribute(int index, int delta) {
@@ -270,25 +272,25 @@ namespace PsdlViewer.UI.Panels {
             current.Attributes.Insert(index + delta, a);
             attributes.Select(new[] { index + delta });
             attributes.Refresh();
-            Changed(DataKind.Blocks);
+            Changed(DataKind.Rooms);
         }
 
-        void ShowBlock(int index) {
-            current = index >= 0 && index < Psdl.Blocks.Count ? Psdl.Blocks[index] : null;
+        void ShowRoom(int index) {
+            current = index >= 0 && index < Psdl.Rooms.Count ? Psdl.Rooms[index] : null;
             currentIndex = current == null ? -1 : index;
             detail.Visible = current != null;
             typeGrid.Clear();
             if (current != null) {
-                var block = current;
-                typeGrid.AddInfo("Block:", () => $"{currentIndex:x}  ({Psdl.BlockCenter(block).X:0.#}, {Psdl.BlockCenter(block).Y:0.#}, {Psdl.BlockCenter(block).Z:0.#})");
+                var room = current;
+                typeGrid.AddInfo("Room:", () => $"{currentIndex:x}  ({Psdl.RoomCenter(room).X:0.#}, {Psdl.RoomCenter(room).Y:0.#}, {Psdl.RoomCenter(room).Z:0.#})");
                 for (int i = 0; i < 8; i++) {
                     int bit = 1 << i;
-                    typeGrid.AddCheck(Block.TypeNames[i], () => block.IsType(bit), v => block.SetType(bit, v));
+                    typeGrid.AddCheck(Room.FlagNames[i], () => room.HasFlag(bit), v => room.SetFlag(bit, v));
                 }
-                typeGrid.AddHex("Prop rule:", () => block.PropRule, v => block.PropRule = v & 0xff, 2, "Line in proprules.csv (0 = none)");
+                typeGrid.AddHex("Prop rule:", () => room.PropRule, v => room.PropRule = v & 0xff, 2, "Line in proprules.csv (0 = none)");
                 typeGrid.Changed += () => {
                     table.Refresh();
-                    Doc.NotifyChanged(DataKind.Blocks);
+                    Doc.NotifyChanged(DataKind.Rooms);
                 };
             }
             perimeter.Reset();
@@ -301,12 +303,14 @@ namespace PsdlViewer.UI.Panels {
                 attributeScroll.RemoveChild(c);
                 c.QueueFree();
             }
+            var room = current;
+            if (!syncingAttributes) Doc.SelectRoomAttributes(room, room == null ? null : attributes.SelectedRows.Where(r => r < room.Attributes.Count).Select(r => room.Attributes[r]).ToArray(), this);
             int row = attributes.SelectedRow;
             if (current == null || row < 0 || row >= current.Attributes.Count) return;
             var editor = new AttributeEditor(current.Attributes[row]);
             editor.Changed += () => {
                 attributes.Refresh();
-                Changed(DataKind.Blocks);
+                Changed(DataKind.Rooms);
             };
             attributeScroll.AddChild(editor);
         }
@@ -319,9 +323,9 @@ namespace PsdlViewer.UI.Panels {
                 return;
             }
             int start = fromStart ? 0 : table.LastSelectedRow + 1;
-            for (int i = start; i < Psdl.Blocks.Count; i++) {
-                foreach (var a in Psdl.Blocks[i].Attributes) {
-                    bool match = hasAttr && a.Id == attrId || hasTex && a is TextureAttribute t && t.Index == texIndex;
+            for (int i = start; i < Psdl.Rooms.Count; i++) {
+                foreach (var a in Psdl.Rooms[i].Attributes) {
+                    bool match = hasAttr && a.Id == attrId || hasTex && a is TextureReferenceAttribute t && t.Index == texIndex;
                     if (!match) continue;
                     table.Select(new[] { i });
                     return;
@@ -333,13 +337,13 @@ namespace PsdlViewer.UI.Panels {
         void OnReplaced() {
             current = null;
             table.Reset();
-            ShowBlock(-1);
+            ShowRoom(-1);
         }
 
         void OnDataChanged(DataKind kind) {
-            if (kind == DataKind.Blocks) {
+            if (kind == DataKind.Rooms) {
                 table.Refresh();
-                if (current != null && !Psdl.Blocks.Contains(current)) ShowBlock(table.SelectedRow);
+                if (current != null && !Psdl.Rooms.Contains(current)) ShowRoom(table.SelectedRow);
                 else {
                     perimeter.Refresh();
                     attributes.Refresh();
@@ -351,10 +355,19 @@ namespace PsdlViewer.UI.Panels {
             }
         }
 
-        void OnBlocksSelected(int[] blocks, object source) {
+        /// <summary>Attributes clicked in the 3D view: show them in the attribute list.</summary>
+        void OnRoomAttributesSelected(object source) {
+            if (source == this || syncingAttributes || current == null || Doc.AttributeRoom != current) return;
+            syncingAttributes = true;
+            detail.CurrentTab = 2;
+            attributes.Select(Doc.SelectedAttributes.Select(a => current.Attributes.IndexOf(a)).Where(i => i >= 0));
+            syncingAttributes = false;
+        }
+
+        void OnRoomsSelected(int[] rooms, object source) {
             if (source == this || syncing) return;
             syncing = true;
-            table.Select(blocks, true, true);
+            table.Select(rooms, true, true);
             syncing = false;
         }
     }

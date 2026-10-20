@@ -17,3 +17,5 @@ mono_crash.*.json
 bin/
 obj/
 *.exe
+
+CLAUDE.local.md

@@ -7,7 +7,7 @@ namespace PsdlViewer.Render {
         public readonly bool Lit;
         readonly Dictionary<TextureEntry, StandardMaterial3D> city = new();
         readonly Dictionary<(TextureEntry, Color), StandardMaterial3D> pkg = new();
-        StandardMaterial3D vertexColor, lines, linesOnTop, water;
+        StandardMaterial3D vertexColor, lines, linesOnTop, water, instHighlight;
 
         public Materials(bool lit) {
             Lit = lit;
@@ -75,6 +75,18 @@ namespace PsdlViewer.Render {
                 ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
                 VertexColorUseAsAlbedo = true,
                 CullMode = BaseMaterial3D.CullModeEnum.Disabled
+            };
+        }
+
+        /// <summary>Translucent red overlay drawn over the selected INST objects.</summary>
+        public Material InstHighlight() {
+            return instHighlight ??= new StandardMaterial3D {
+                ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
+                AlbedoColor = new Color(1f, 0.25f, 0.2f, 0.35f),
+                Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
+                CullMode = BaseMaterial3D.CullModeEnum.Disabled,
+                NoDepthTest = true,
+                RenderPriority = 9
             };
         }
 

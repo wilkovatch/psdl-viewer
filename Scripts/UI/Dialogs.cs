@@ -32,6 +32,11 @@ namespace PsdlViewer.UI {
             Info(message, "Error");
         }
 
+        public static void Warning(string message) {
+            GD.PushWarning(message);
+            Info(message, "Warning");
+        }
+
         public static void Confirm(string message, Action yes, string title = "Confirm") {
             var d = new ConfirmationDialog { Title = title, DialogText = message, DialogAutowrap = true, MinSize = new Vector2I(360, 0) };
             d.Confirmed += () => yes();
@@ -118,6 +123,21 @@ namespace PsdlViewer.UI {
                 }
                 d.QueueFree();
                 ok(path);
+            };
+            ShowFileDialog(d);
+        }
+
+        /// <summary>Open picker with a checkbox per option (shown in both Godot's and the native picker); ok gets the checked state of each.</summary>
+        public static void OpenFile(string title, string[] filters, (string label, bool value)[] options, Action<string, bool[]> ok) {
+            var d = MakeFileDialog(title, FileDialog.FileModeEnum.OpenFile, filters, Settings.Current.OpenPath);
+            foreach (var (label, value) in options) d.AddOption(label, Array.Empty<string>(), value ? 1 : 0);
+            d.FileSelected += path => {
+                Settings.Current.OpenPath = Path.GetDirectoryName(path);
+                Settings.Save();
+                var selected = d.GetSelectedOptions();
+                var values = Array.ConvertAll(options, o => selected.TryGetValue(o.label, out var v) ? v.AsInt32() != 0 : o.value);
+                d.QueueFree();
+                ok(path, values);
             };
             ShowFileDialog(d);
         }

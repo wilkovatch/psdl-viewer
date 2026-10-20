@@ -19,7 +19,7 @@ namespace PsdlViewer.Core {
 
         public bool Initialized => psdl != null;
 
-        /// <summary>Creates the flat grid of blocks. Returns the new PSDL.</summary>
+        /// <summary>Creates the flat grid of rooms. Returns the new PSDL.</summary>
         public PsdlFile Init() {
             if (Size < 3) Size = 3;
             psdl = new PsdlFile();
@@ -42,10 +42,10 @@ namespace PsdlViewer.Core {
             int index = 0;
             for (int i = 1; i < Size - 1; i += 2) {
                 for (int j = 1; j < Size - 1; j += 2) {
-                    var block = new Block();
-                    AddPerimeter(j, i, block, index);
-                    AddGround(j, i, block);
-                    psdl.Blocks.Add(block);
+                    var room = new Room();
+                    AddPerimeter(j, i, room, index);
+                    AddGround(j, i, room);
+                    psdl.Rooms.Add(room);
                     index++;
                 }
             }
@@ -55,7 +55,7 @@ namespace PsdlViewer.Core {
 
         int Offset(int x, int z) => z * Size + x;
 
-        void AddPerimeter(int n, int n2, Block block, int id) {
+        void AddPerimeter(int n, int n2, Room room, int id) {
             int size = Size;
             const int none = -1;
             int c2 = n == size - 2 ? none : id + 1;
@@ -66,7 +66,7 @@ namespace PsdlViewer.Core {
             int c7 = n2 == size - 2 || n == 1 ? none : id + size / 2 - 1;
             int c8 = n2 == 1 || n == size - 2 ? none : id - size / 2 + 1;
             int c9 = n2 == 1 || n == 1 ? none : id - size / 2 - 1;
-            void Add(int x, int z, int b) => block.Perimeter.Add(new PerimeterPoint(Offset(x, z), b));
+            void Add(int x, int z, int b) => room.Perimeter.Add(new PerimeterPoint(Offset(x, z), b));
             Add(n, n2, none);
             Add(n - 1, n2 + 1, c3);
             Add(n - 1, n2, c3);
@@ -87,14 +87,14 @@ namespace PsdlViewer.Core {
             Add(n, n2, none);
         }
 
-        void AddGround(int n, int n2, Block block) {
-            block.Attributes.Add(new TextureAttribute { Index = (int)(random.NextDouble() * 2 + 0.5) });
+        void AddGround(int n, int n2, Room room) {
+            room.Attributes.Add(new TextureReferenceAttribute { Index = (int)(random.NextDouble() * 2 + 0.5) });
             var fan = new FanAttribute(AttributeType.TriangleFan) { ExplicitCount = true };
             fan.Vertices.AddRange(new[] {
                 Offset(n, n2), Offset(n - 1, n2 + 1), Offset(n, n2 + 1), Offset(n + 1, n2 + 1), Offset(n + 1, n2),
                 Offset(n + 1, n2 - 1), Offset(n, n2 - 1), Offset(n - 1, n2 - 1), Offset(n - 1, n2), Offset(n - 1, n2 + 1), Offset(n, n2)
             });
-            block.Attributes.Add(fan);
+            room.Attributes.Add(fan);
         }
 
         float Y(int x, int z) => psdl.Vertices[grid[x, z]].Y;
@@ -163,8 +163,8 @@ namespace PsdlViewer.Core {
         public List<List<(Vector3 a, Vector3 b)>> Water() {
             var edges = new List<(Vector3 a, Vector3 b)>();
             if (psdl == null) return new List<List<(Vector3, Vector3)>>();
-            foreach (var block in psdl.Blocks) {
-                var per = block.Perimeter;
+            foreach (var room in psdl.Rooms) {
+                var per = room.Perimeter;
                 if (per.Count < 3) continue;
                 var center = psdl.Vertices[per[0].Vertex];
                 int n = 1;

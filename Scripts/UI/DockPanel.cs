@@ -4,7 +4,7 @@ using Godot;
 namespace PsdlViewer.UI {
     /// <summary>A panel shown as a tab in one of the dock areas (the original viewer's internal frames).</summary>
     public partial class DockPanel : VBoxContainer {
-        /// <summary>Kind used for numbering ("Blocks 1", "Blocks 2", ...).</summary>
+        /// <summary>Kind used for numbering ("Rooms 1", "Rooms 2", ...).</summary>
         public virtual string Kind => "Panel";
         /// <summary>Subscriptions to app wide events, attached while in the tree.</summary>
         protected event Action Attach;

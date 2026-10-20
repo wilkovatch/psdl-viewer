@@ -35,7 +35,7 @@ namespace PsdlViewer.Formats {
     public class BaiRoute {
         public int Id;
         public int Unknown0;
-        public List<int> Blocks = new();
+        public List<int> Rooms = new();
         public float Unknown1;
         public float Unknown2;
         public BaiRoadData Right = new();
@@ -54,7 +54,7 @@ namespace PsdlViewer.Formats {
 
     public class BaiIntersection {
         public int Id;
-        public int Block;
+        public int Room;
         public Vector3 Center;
         public List<uint> Routes = new();
     }
@@ -74,9 +74,13 @@ namespace PsdlViewer.Formats {
             using var stream = File.OpenRead(path);
             using var r = new BinaryReader(stream);
             progress?.Begin("Reading header", stream.Length);
-            if (r.ReadMagic() != "CAI1") throw new InvalidDataException("Not a BAI file.");
+            FileLog.Print($"Reading BAI file {path}");
+            string magic = r.ReadMagic();
+            FileLog.Print("Header: " + magic);
+            if (magic != "CAI1") throw new InvalidDataException("Not a BAI file.");
             int intersections = r.ReadUInt16();
             int routes = r.ReadUInt16();
+            FileLog.Print($"{intersections} intersections, {routes} routes");
             if (progress != null) progress.Note = "Reading routes";
             for (int i = 0; i < routes; i++) {
                 bai.Routes.Add(ReadRoute(r));
@@ -86,7 +90,7 @@ namespace PsdlViewer.Formats {
             for (int i = 0; i < intersections; i++) {
                 var x = new BaiIntersection {
                     Id = r.ReadUInt16(),
-                    Block = r.ReadUInt16() - 1,
+                    Room = r.ReadUInt16() - 1,
                     Center = r.ReadVec3()
                 };
                 int n = r.ReadUInt16();
@@ -104,7 +108,9 @@ namespace PsdlViewer.Formats {
                     bai.CullLarge = bai.CullSmall = null;
                 }
             }
+            if (bai.CullLarge != null) FileLog.Print($"Culling lists for {bai.CullLarge.Count} rooms");
             bai.Trailer = r.ReadBytes((int)(stream.Length - stream.Position));
+            FileLog.Print($"Bytes left in file: {bai.Trailer.Length}");
             return bai;
         }
 
@@ -130,8 +136,8 @@ namespace PsdlViewer.Formats {
             var route = new BaiRoute { Id = r.ReadUInt16() };
             int points = r.ReadUInt16();
             route.Unknown0 = r.ReadUInt16();
-            int blocks = r.ReadUInt16();
-            for (int i = 0; i < blocks; i++) route.Blocks.Add(r.ReadUInt16() - 1);
+            int rooms = r.ReadUInt16();
+            for (int i = 0; i < rooms; i++) route.Rooms.Add(r.ReadUInt16() - 1);
             route.Unknown1 = r.ReadSingle();
             route.Unknown2 = r.ReadSingle();
             route.Right = ReadRoadData(r, points);
@@ -192,7 +198,7 @@ namespace PsdlViewer.Formats {
                 foreach (var route in Routes) WriteRoute(w, route);
                 foreach (var x in Intersections) {
                     w.Write((ushort)x.Id);
-                    w.Write((ushort)(x.Block + 1));
+                    w.Write((ushort)(x.Room + 1));
                     w.Write(x.Center);
                     w.Write((ushort)x.Routes.Count);
                     foreach (uint id in x.Routes) w.Write(id);
@@ -211,8 +217,8 @@ namespace PsdlViewer.Formats {
             w.Write((ushort)route.Id);
             w.Write((ushort)route.Points);
             w.Write((ushort)route.Unknown0);
-            w.Write((ushort)route.Blocks.Count);
-            foreach (int b in route.Blocks) w.Write((ushort)(b + 1));
+            w.Write((ushort)route.Rooms.Count);
+            foreach (int b in route.Rooms) w.Write((ushort)(b + 1));
             w.Write(route.Unknown1);
             w.Write(route.Unknown2);
             WriteRoadData(w, route.Right);

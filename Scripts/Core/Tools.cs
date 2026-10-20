@@ -10,24 +10,24 @@ using PsdlViewer.Formats.Psdl;
 namespace PsdlViewer.Core {
     /// <summary>The "Tools" menu operations of the original viewer.</summary>
     public static class Tools {
-        /// <summary>Sets up the neighbour reference of every perimeter point (vertices shared with other blocks).</summary>
+        /// <summary>Sets up the neighbour reference of every perimeter point (vertices shared with other rooms).</summary>
         public static void AutoNeighbours(PsdlFile psdl, Progress progress) {
-            var blocks = psdl.Blocks;
-            progress.Begin("Computing perimeters", blocks.Count);
-            // vertex -> blocks whose perimeter contains it, in block order
+            var rooms = psdl.Rooms;
+            progress.Begin("Computing perimeters", rooms.Count);
+            // vertex -> rooms whose perimeter contains it, in room order
             var users = new Dictionary<int, List<int>>();
-            for (int k = 0; k < blocks.Count; k++) {
+            for (int k = 0; k < rooms.Count; k++) {
                 int last = -1;
-                foreach (var p in blocks[k].Perimeter) {
+                foreach (var p in rooms[k].Perimeter) {
                     if (p.Vertex == last) continue;
                     last = p.Vertex;
                     if (!users.TryGetValue(p.Vertex, out var list)) users[p.Vertex] = list = new List<int>();
                     list.Add(k);
                 }
             }
-            for (int i = 0; i < blocks.Count; i++) {
+            for (int i = 0; i < rooms.Count; i++) {
                 progress.Value = i;
-                var perimeter = blocks[i].Perimeter;
+                var perimeter = rooms[i].Perimeter;
                 int previous = -1;
                 for (int j = 0; j < perimeter.Count; j++) {
                     var point = perimeter[j];
@@ -37,13 +37,13 @@ namespace PsdlViewer.Core {
                         continue;
                     }
                     previous = point.Vertex;
-                    point.Block = -1;
+                    point.Room = -1;
                     bool first = true;
                     if (!users.TryGetValue(point.Vertex, out var list)) continue;
                     foreach (int k in list) {
                         if (k == i) continue;
                         if (first) {
-                            point.Block = k;
+                            point.Room = k;
                             first = false;
                         } else {
                             perimeter.Insert(j++, new PerimeterPoint(point.Vertex, k));
@@ -53,26 +53,26 @@ namespace PsdlViewer.Core {
             }
         }
 
-        /// <summary>Sets the "last attribute" flag on the final attribute of every block only.</summary>
+        /// <summary>Sets the "last attribute" flag on the final attribute of every room only.</summary>
         public static void AutoLastAttribute(PsdlFile psdl, Progress progress) {
-            progress.Begin("Computing last attribute flags", psdl.Blocks.Count);
-            for (int i = 0; i < psdl.Blocks.Count; i++) {
-                var attributes = psdl.Blocks[i].Attributes;
+            progress.Begin("Computing last attribute flags", psdl.Rooms.Count);
+            for (int i = 0; i < psdl.Rooms.Count; i++) {
+                var attributes = psdl.Rooms[i].Attributes;
                 for (int j = 0; j < attributes.Count; j++) attributes[j].Last = j == attributes.Count - 1;
                 progress.Value = i;
             }
         }
 
-        /// <summary>Sets the road and intersection bits from the attributes each block contains.</summary>
-        public static void AutoBlockType(PsdlFile psdl, Progress progress) {
-            progress.Begin("Computing block types", psdl.Blocks.Count);
-            for (int i = 0; i < psdl.Blocks.Count; i++) {
-                var block = psdl.Blocks[i];
+        /// <summary>Sets the road and intersection flags from the attributes each room contains.</summary>
+        public static void AutoRoomFlags(PsdlFile psdl, Progress progress) {
+            progress.Begin("Computing room flags", psdl.Rooms.Count);
+            for (int i = 0; i < psdl.Rooms.Count; i++) {
+                var room = psdl.Rooms[i];
                 bool road = false, intersection = false;
-                foreach (var a in block.Attributes) {
+                foreach (var a in room.Attributes) {
                     switch (a.Type) {
-                        case AttributeType.Road:
-                        case AttributeType.RoadNoSidewalk:
+                        case AttributeType.RoadWithSidewalks:
+                        case AttributeType.RoadWithoutSidewalks:
                         case AttributeType.DividedRoad:
                             road = true;
                             break;
@@ -81,28 +81,28 @@ namespace PsdlViewer.Core {
                             break;
                     }
                 }
-                block.SetType(Block.TypeRoad, road);
-                block.SetType(Block.TypeIntersection, intersection);
+                room.SetFlag(Room.FlagRoad, road);
+                room.SetFlag(Room.FlagIntersection, intersection);
                 progress.Value = i;
             }
         }
 
-        /// <summary>Sorts blocks: plain blocks first, then roads, then intersections (references are updated).</summary>
-        public static void AutoBlockSort(PsdlFile psdl, Progress progress) {
-            progress.Begin("Sorting blocks", psdl.Blocks.Count);
+        /// <summary>Sorts rooms: plain rooms first, then road rooms, then intersections (references are updated).</summary>
+        public static void AutoRoomSort(PsdlFile psdl, Progress progress) {
+            progress.Begin("Sorting rooms", psdl.Rooms.Count);
             int plainEnd = 0, roadEnd = 0, crossingEnd = 0;
-            for (int i = 0; i < psdl.Blocks.Count; i++) {
+            for (int i = 0; i < psdl.Rooms.Count; i++) {
                 progress.Value = i;
-                var block = psdl.Blocks[i];
-                if (block.IsType(Block.TypeIntersection)) {
-                    if (i != crossingEnd) Doc.MoveBlock(i, crossingEnd);
+                var room = psdl.Rooms[i];
+                if (room.HasFlag(Room.FlagIntersection)) {
+                    if (i != crossingEnd) Doc.MoveRoom(i, crossingEnd);
                     crossingEnd++;
-                } else if (block.IsType(Block.TypeRoad)) {
-                    if (i != roadEnd) Doc.MoveBlock(i, roadEnd);
+                } else if (room.HasFlag(Room.FlagRoad)) {
+                    if (i != roadEnd) Doc.MoveRoom(i, roadEnd);
                     roadEnd++;
                     crossingEnd++;
-                } else if (block.IsType(Block.TypePlain)) {
-                    if (i != plainEnd) Doc.MoveBlock(i, plainEnd);
+                } else if (room.HasFlag(Room.FlagPlain)) {
+                    if (i != plainEnd) Doc.MoveRoom(i, plainEnd);
                     plainEnd++;
                     roadEnd++;
                     crossingEnd++;
@@ -111,35 +111,24 @@ namespace PsdlViewer.Core {
         }
 
         /// <summary>Recomputes the bounding box and sphere from the vertex list.</summary>
-        public static void AutoDimensions(PsdlFile psdl) {
-            var d = psdl.Dimensions;
-            if (psdl.Vertices.Count == 0) return;
-            d.Min = new Vector3(float.MaxValue);
-            d.Max = new Vector3(float.MinValue);
-            foreach (var v in psdl.Vertices) {
-                d.Min = Vector3.Min(d.Min, v);
-                d.Max = Vector3.Max(d.Max, v);
-            }
-            d.Center = (d.Min + d.Max) / 2;
-            d.Radius = (d.Max - d.Center).Length();
-        }
+        public static void AutoDimensions(PsdlFile psdl) => psdl.FitDimensions();
 
         class FacadeEdge {
             public int P0, P1;
             public int Top;
-            public BlockAttribute First;
+            public RoomAttribute First;
             public bool HasBound;
         }
 
         /// <summary>Adds a facade bound for every facade/sliver edge that doesn't have one.</summary>
         public static int AutoFacadeBounds(PsdlFile psdl, Progress progress) {
-            progress.Begin("Computing facade bounds", psdl.Blocks.Count);
+            progress.Begin("Computing facade bounds", psdl.Rooms.Count);
             int added = 0;
-            for (int i = 0; i < psdl.Blocks.Count; i++) {
+            for (int i = 0; i < psdl.Rooms.Count; i++) {
                 progress.Value = i;
-                var attributes = psdl.Blocks[i].Attributes;
+                var attributes = psdl.Rooms[i].Attributes;
                 var edges = new List<FacadeEdge>();
-                FacadeEdge AddEdge(int p0, int p1, int top, BlockAttribute a) {
+                FacadeEdge AddEdge(int p0, int p1, int top, RoomAttribute a) {
                     foreach (var e in edges) {
                         if (e.P0 == p0 && e.P1 == p1) {
                             if (psdl.HeightAt(top) > psdl.HeightAt(e.Top)) e.Top = top;
@@ -167,20 +156,20 @@ namespace PsdlViewer.Core {
             return added;
         }
 
-        /// <summary>Writes the simplest possible CPVS: every block sees all blocks within the given radius.</summary>
+        /// <summary>Writes the simplest possible CPVS: every room sees all rooms within the given radius.</summary>
         public static void GenerateCpvs(PsdlFile psdl, float radius, string path, Progress progress) {
-            var blocks = psdl.Blocks;
-            progress.Begin("Generating CPVS file", blocks.Count);
+            var rooms = psdl.Rooms;
+            progress.Begin("Generating CPVS file", rooms.Count);
             var sets = new List<byte[]>();
-            for (int i = 0; i < blocks.Count; i++) {
-                progress.Note = "Block " + i;
+            for (int i = 0; i < rooms.Count; i++) {
+                progress.Note = "Room " + i;
                 progress.Value = i;
-                var center = psdl.BlockCenter(blocks[i]);
-                var visible = new bool[blocks.Count];
+                var center = psdl.RoomCenter(rooms[i]);
+                var visible = new bool[rooms.Count];
                 visible[i] = true;
-                for (int j = 0; j < blocks.Count; j++) {
+                for (int j = 0; j < rooms.Count; j++) {
                     if (visible[j]) continue;
-                    foreach (var p in blocks[j].Perimeter) {
+                    foreach (var p in rooms[j].Perimeter) {
                         if (p.Vertex < psdl.Vertices.Count && Vector3.Distance(psdl.Vertices[p.Vertex], center) < radius) {
                             visible[j] = true;
                             break;
@@ -194,7 +183,7 @@ namespace PsdlViewer.Core {
             using (var stream = File.Create(temp))
             using (var w = new BinaryWriter(stream)) {
                 w.Write(BinaryUtil.Text.GetBytes("PVS0"));
-                w.Write((uint)(blocks.Count + 2));
+                w.Write((uint)(rooms.Count + 2));
                 uint offset = 0;
                 foreach (var s in sets) {
                     w.Write(offset);
@@ -206,7 +195,7 @@ namespace PsdlViewer.Core {
             File.Move(temp, path, true);
         }
 
-        /// <summary>Run-length style encoding of the original viewer: 2 bits per block, 0x80 headers per 128 bytes.</summary>
+        /// <summary>Run-length style encoding of the original viewer: 2 bits per room, 0x80 headers per 128 bytes.</summary>
         static byte[] EncodeVisibility(bool[] visible) {
             var buf = new byte[visible.Length + visible.Length / 127 + 4];
             int shift = 2, n = 0, header = 0, count = 0;

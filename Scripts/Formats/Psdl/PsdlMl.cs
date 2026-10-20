@@ -35,7 +35,7 @@ namespace PsdlViewer.Formats.Psdl {
                     case "vertex": ml.AddVertex(e, false); break;
                     case "height": ml.AddHeight(e, false); break;
                     case "texture": ml.AddTexture(e); break;
-                    case "block": ml.AddBlock(e); break;
+                    case "block": ml.AddRoom(e); break; // psdl-ml still calls rooms "blocks"
                 }
                 if (progress != null) progress.Value = i;
             }
@@ -90,8 +90,8 @@ namespace PsdlViewer.Formats.Psdl {
             return psdl.Textures.Count - 1;
         }
 
-        void AddBlock(XmlElement e) {
-            var block = new Block();
+        void AddRoom(XmlElement e) {
+            var room = new Room();
             foreach (XmlNode child in e.ChildNodes) {
                 if (child is not XmlElement c) continue;
                 if (c.Name == "perimeter") {
@@ -102,14 +102,14 @@ namespace PsdlViewer.Formats.Psdl {
                     int connected = -1;
                     string s = c.GetAttribute("block");
                     if (s.Length != 0) connected = int.Parse(s);
-                    if (vertex != null) block.Perimeter.Add(new PerimeterPoint(AddVertex(vertex, true), connected));
+                    if (vertex != null) room.Perimeter.Add(new PerimeterPoint(AddVertex(vertex, true), connected));
                 } else if (c.Name == "attributes") {
                     foreach (XmlNode n in c.ChildNodes) {
-                        if (n is XmlElement a) AddAttribute(a, block);
+                        if (n is XmlElement a) AddAttribute(a, room);
                     }
                 }
             }
-            psdl.Blocks.Add(block);
+            psdl.Rooms.Add(room);
         }
 
         void ReadVertices(XmlElement e, List<int> target) {
@@ -121,18 +121,18 @@ namespace PsdlViewer.Formats.Psdl {
 
         static bool Yes(XmlElement e, string name) => e.GetAttribute(name) == "yes";
 
-        void AddAttribute(XmlElement e, Block block) {
+        void AddAttribute(XmlElement e, Room room) {
             string name = e.Name;
             if (!BinaryUtil.TryParseHex(name.Substring(name.LastIndexOf('_') + 1), out int id)) return;
-            var attribute = BlockAttribute.Create(id);
+            var attribute = RoomAttribute.Create(id);
             string s;
             switch (attribute) {
-                case TextureAttribute t:
+                case TextureReferenceAttribute t:
                     t.Index = ReadMaterials(e);
                     break;
                 case DividedRoadAttribute d:
                     if ((s = e.GetAttribute("type")).Length != 0) d.DividerType = int.Parse(s);
-                    if ((s = e.GetAttribute("value")).Length != 0) d.Height = float.Parse(s, CultureInfo.InvariantCulture);
+                    if ((s = e.GetAttribute("value")).Length != 0) d.ScaledValue = float.Parse(s, CultureInfo.InvariantCulture);
                     d.SetFlag(DividedRoadAttribute.FlagCloseStart, Yes(e, "closestart"));
                     d.SetFlag(DividedRoadAttribute.FlagCloseEnd, Yes(e, "closeend"));
                     foreach (XmlNode n in e.ChildNodes) {
@@ -140,7 +140,7 @@ namespace PsdlViewer.Formats.Psdl {
                     }
                     ReadVertices(e, d.Vertices);
                     break;
-                case RoofAttribute roof:
+                case RoofTriangleFanAttribute roof:
                     if ((s = e.GetAttribute("height")).Length != 0) roof.HeightRef = AddHeight(float.Parse(s, CultureInfo.InvariantCulture), true);
                     ReadVertices(e, roof.Vertices);
                     break;
@@ -167,7 +167,7 @@ namespace PsdlViewer.Formats.Psdl {
                 case TunnelAttribute tunnel:
                     tunnel.SetFlag(TunnelAttribute.LeftSide, Yes(e, "left"));
                     tunnel.SetFlag(TunnelAttribute.RightSide, Yes(e, "right"));
-                    tunnel.SetFlag(TunnelAttribute.Wall, Yes(e, "wall"));
+                    tunnel.SetFlag(TunnelAttribute.StyleWall, Yes(e, "wall"));
                     if (Yes(e, "ceiling")) tunnel.SetFlag(Yes(e, "subdividedceiling") ? TunnelAttribute.CurvedCeiling : TunnelAttribute.FlatCeiling, true);
                     tunnel.SetFlag(TunnelAttribute.CurvedSides, Yes(e, "subdividedwall"));
                     tunnel.SetFlag(TunnelAttribute.Culled, Yes(e, "thick"));
@@ -177,7 +177,7 @@ namespace PsdlViewer.Formats.Psdl {
                 default:
                     return;
             }
-            block.Attributes.Add(attribute);
+            room.Attributes.Add(attribute);
         }
 
         /// <summary>Reads a list of texture names and returns the index of the first one, reusing an identical run if present.</summary>
@@ -209,14 +209,14 @@ namespace PsdlViewer.Formats.Psdl {
             foreach (var v in psdl.Vertices) sb.Append("v ").Append(v.X.ToString(ci)).Append(' ').Append(v.Y.ToString(ci)).Append(' ').Append(v.Z.ToString(ci)).Append('\n');
             sb.Append('\n');
             foreach (string t in psdl.Textures) sb.Append("td ").Append(string.IsNullOrEmpty(t) ? "---notexture---" : t).Append('\n');
-            sb.Append("\nrooms 1 1 ").Append(psdl.Blocks.Count - 1).Append('\n');
-            for (int i = 0; i < psdl.Blocks.Count; i++) {
-                var block = psdl.Blocks[i];
+            sb.Append("\nrooms 1 1 ").Append(psdl.Rooms.Count - 1).Append('\n');
+            for (int i = 0; i < psdl.Rooms.Count; i++) {
+                var room = psdl.Rooms[i];
                 sb.Append("\nroom ").Append(i + 1).Append('\n');
                 sb.Append("id ").Append(i + 1).Append('\n');
                 sb.Append("type 1\n");
-                foreach (var a in block.Attributes) {
-                    if (a is TextureAttribute t) {
+                foreach (var a in room.Attributes) {
+                    if (a is TextureReferenceAttribute t) {
                         sb.Append("tex ").Append(t.Index).Append('\n');
                         continue;
                     }
@@ -226,8 +226,8 @@ namespace PsdlViewer.Formats.Psdl {
                     for (int k = 2; k + 1 < bytes.Length; k += 2) sb.Append(BitConverter.ToUInt16(bytes, k).ToString("x4")).Append(' ');
                     sb.Append('\n');
                 }
-                sb.Append("perimeter ").Append(block.Perimeter.Count).Append('\n');
-                foreach (var p in block.Perimeter) sb.Append("    ").Append(p.Vertex).Append(' ').Append(p.Block + 1).Append('\n');
+                sb.Append("perimeter ").Append(room.Perimeter.Count).Append('\n');
+                foreach (var p in room.Perimeter) sb.Append("    ").Append(p.Vertex).Append(' ').Append(p.Room + 1).Append('\n');
             }
             File.WriteAllText(path, sb.ToString());
         }

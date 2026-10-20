@@ -14,13 +14,18 @@ namespace PsdlViewer.Render {
     public partial class CityScene : Node3D {
         public static CityScene Instance { get; private set; }
 
-        Node3D cityRoot, instRoot, baiRoot, pathsetRoot, labelRoot, boundRoot, levelRoot;
-        MeshInstance3D vertexMarkers, blockBounds, routeMarkers;
+        Node3D cityRoot, instRoot, baiRoot, pathsetRoot, labelRoot, boundRoot, levelRoot, instHighlight;
+        MeshInstance3D vertexMarkers, roomBounds, instBounds, attributeOutline, routeMarkers;
         DirectionalLight3D headlight;
         WorldEnvironment environment;
         Materials materials;
         Vector3[] pickTriangles = Array.Empty<Vector3>();
-        int[] pickBlocks = Array.Empty<int>();
+        int[] pickRooms = Array.Empty<int>();
+        InstPick[] instPicks = Array.Empty<InstPick>();
+        /// <summary>Attribute geometry of the selected room, for clicking on its attributes.</summary>
+        Room attributePickRoom;
+        Vector3[] attributePickTriangles = Array.Empty<Vector3>();
+        int[] attributePickIndices = Array.Empty<int>();
 
         public Materials Materials => materials;
         public bool Busy { get; private set; }
@@ -31,14 +36,19 @@ namespace PsdlViewer.Render {
             instRoot = AddRoot("INST");
             baiRoot = AddRoot("BAI");
             pathsetRoot = AddRoot("Pathsets");
-            labelRoot = AddRoot("BlockLabels");
+            labelRoot = AddRoot("RoomLabels");
             boundRoot = AddRoot("CityBound");
             levelRoot = AddRoot("Level");
+            instHighlight = AddRoot("InstHighlight");
             vertexMarkers = new MeshInstance3D { Name = "VertexMarkers" };
-            blockBounds = new MeshInstance3D { Name = "BlockBounds" };
+            roomBounds = new MeshInstance3D { Name = "RoomBounds" };
+            instBounds = new MeshInstance3D { Name = "InstBounds" };
+            attributeOutline = new MeshInstance3D { Name = "AttributeOutline" };
             routeMarkers = new MeshInstance3D { Name = "RouteMarkers" };
             AddChild(vertexMarkers);
-            AddChild(blockBounds);
+            AddChild(roomBounds);
+            AddChild(instBounds);
+            AddChild(attributeOutline);
             AddChild(routeMarkers);
             headlight = new DirectionalLight3D { Name = "Headlight", LightEnergy = 1.0f, ShadowEnabled = false };
             AddChild(headlight);
@@ -47,11 +57,26 @@ namespace PsdlViewer.Render {
             ApplySettings();
 
             Doc.VerticesSelected += OnVerticesSelected;
-            Doc.BlocksSelected += (blocks, source) => UpdateBlockBounds();
+            Doc.RoomsSelected += (rooms, source) => {
+                UpdateRoomBounds();
+                UpdateAttributePicks();
+            };
+            Doc.InstSelected += (components, source) => UpdateInstHighlight();
+            Doc.InstReplaced += UpdateInstHighlight;
+            Doc.RoomAttributesSelected += source => UpdateAttributeOutline();
+            Doc.DataChanged += kind => {
+                if (kind == DataKind.Inst) UpdateInstHighlight();
+                else if (kind is DataKind.Rooms or DataKind.Vertices or DataKind.Heights or DataKind.Textures) {
+                    UpdateAttributeOutline();
+                    UpdateAttributePicks();
+                }
+            };
             Doc.RoutesSelected += OnRoutesSelected;
             Doc.PsdlReplaced += () => {
                 vertexMarkers.Mesh = null;
-                blockBounds.Mesh = null;
+                roomBounds.Mesh = null;
+                attributeOutline.Mesh = null;
+                UpdateAttributePicks();
                 ClearChildren(levelRoot);
             };
         }
@@ -93,10 +118,10 @@ namespace PsdlViewer.Render {
             instRoot.Visible = s.RenderInst;
             pathsetRoot.Visible = s.ShowPathsets;
             baiRoot.Visible = s.ShowBai;
-            labelRoot.Visible = s.ShowBlockIndices;
+            labelRoot.Visible = s.ShowRoomIndices;
             boundRoot.Visible = s.ShowCityBounds;
             routeMarkers.Visible = s.ShowBai;
-            UpdateBlockBounds();
+            UpdateRoomBounds();
         }
 
         /// <summary>Lights the scene from the camera like the original viewer's camera-mounted light.</summary>
@@ -133,11 +158,16 @@ namespace PsdlViewer.Render {
                 if (i % 24 == 0) await NextFrame(this);
             }
             pickTriangles = data.PickTriangles.ToArray();
-            pickBlocks = data.PickBlocks.ToArray();
-            if (data.SkippedAttributes > 0) Doc.Status($"{data.SkippedAttributes} attributes could not be rendered (first: {data.FirstError})");
+            pickRooms = data.PickRooms.ToArray();
+            foreach (var (name, (count, room)) in data.NotRendered) GD.Print($"Attribute \"{name}\" not rendered ({count} times, first in room {room:x}).");
+            if (data.SkippedAttributes > 0) {
+                string message = $"{data.SkippedAttributes} attributes could not be rendered (first: {data.FirstError})";
+                GD.PushWarning(message);
+                Doc.Status(message);
+            }
             RebuildLabels();
             RebuildCityBound();
-            UpdateBlockBounds();
+            UpdateRoomBounds();
             OnVerticesSelected(Doc.SelectedVertices);
         }
 
@@ -148,8 +178,21 @@ namespace PsdlViewer.Render {
             public List<Transform3D> Transforms = new();
         }
 
+        /// <summary>A rendered INST object, kept for picking.</summary>
+        struct InstPick {
+            public int Component;
+            public PkgMeshData Mesh;
+            public Transform3D Transform;
+        }
+
+        static Transform3D InstTransform(InstComponent c) {
+            var (x, y, z) = c.Axes;
+            return new Transform3D(new Basis(x.ToGodot(), y.ToGodot(), z.ToGodot()), c.Origin.ToGodot());
+        }
+
         public async Task RebuildInst(Progress progress) {
             var inst = Doc.Inst;
+            var picks = new List<InstPick>();
             var groups = await Task.Run(() => {
                 var result = new Dictionary<string, Placement>();
                 progress.Begin("Rendering INST", inst.Components.Count);
@@ -158,14 +201,16 @@ namespace PsdlViewer.Render {
                     progress.Value = i;
                     var mesh = PkgStore.GetMeshData(c.Pkg, c.PaintJob);
                     if (mesh == null) continue;
-                    var (x, y, z) = c.Axes;
-                    var t = new Transform3D(new Basis(x.ToGodot(), y.ToGodot(), z.ToGodot()), c.Origin.ToGodot());
+                    var t = InstTransform(c);
                     if (!result.TryGetValue(mesh.Key, out var p)) result[mesh.Key] = p = new Placement { Mesh = mesh };
                     p.Transforms.Add(t);
+                    picks.Add(new InstPick { Component = i, Mesh = mesh, Transform = t });
                 }
                 return result;
             });
             await Commit(instRoot, groups, progress, "Uploading INST");
+            instPicks = picks.ToArray();
+            UpdateInstHighlight();
         }
 
         async Task Commit(Node3D root, Dictionary<string, Placement> groups, Progress progress, string note) {
@@ -373,11 +418,11 @@ namespace PsdlViewer.Render {
 
         public void RebuildLabels() {
             ClearChildren(labelRoot);
-            if (!Settings.Current.ShowBlockIndices) return;
+            if (!Settings.Current.ShowRoomIndices) return;
             var psdl = Doc.Psdl;
             float size = Math.Max(0.1f, Settings.Current.LabelSize);
-            for (int i = 0; i < psdl.Blocks.Count; i++) {
-                var c = psdl.BlockCenter(psdl.Blocks[i]).ToGodot();
+            for (int i = 0; i < psdl.Rooms.Count; i++) {
+                var c = psdl.RoomCenter(psdl.Rooms[i]).ToGodot();
                 labelRoot.AddChild(new Label3D {
                     Text = i.ToString("x"),
                     Position = c + new Vector3(0, 2, 0),
@@ -417,7 +462,7 @@ namespace PsdlViewer.Render {
                     pos.Add(center + new Vector3(Mathf.Cos(a1) * Mathf.Cos(theta), Mathf.Sin(a1), Mathf.Cos(a1) * Mathf.Sin(theta)) * r); col.Add(color);
                 }
             }
-            if (r > 0) boundRoot.AddChild(new MeshInstance3D { Mesh = Lines(pos, col, false) });
+            if (r > 0 && float.IsFinite(r) && center.IsFinite()) boundRoot.AddChild(new MeshInstance3D { Mesh = Lines(pos, col, false) });
         }
 
         void OnVerticesSelected(int[] indices) {
@@ -435,20 +480,20 @@ namespace PsdlViewer.Render {
             vertexMarkers.Mesh = pos.Count > 0 ? Lines(pos, col, true) : null;
         }
 
-        void UpdateBlockBounds() {
-            if (blockBounds == null) return;
-            if (!Settings.Current.ShowBlockBounds) {
-                blockBounds.Mesh = null;
+        void UpdateRoomBounds() {
+            if (roomBounds == null) return;
+            if (!Settings.Current.ShowRoomBounds) {
+                roomBounds.Mesh = null;
                 return;
             }
             var pos = new List<Vector3>();
             var col = new List<Color>();
             var psdl = Doc.Psdl;
-            foreach (int b in Doc.SelectedBlocks) {
-                if (b < 0 || b >= psdl.Blocks.Count) continue;
+            foreach (int b in Doc.SelectedRooms) {
+                if (b < 0 || b >= psdl.Rooms.Count) continue;
                 var points = new List<Vector3>();
                 int last = -1;
-                foreach (var p in psdl.Blocks[b].Perimeter) {
+                foreach (var p in psdl.Rooms[b].Perimeter) {
                     if (p.Vertex == last || p.Vertex >= psdl.Vertices.Count) continue;
                     last = p.Vertex;
                     points.Add(psdl.Vertices[p.Vertex].ToGodot());
@@ -463,7 +508,96 @@ namespace PsdlViewer.Render {
                     pos.Add(points[0]); col.Add(Color.FromHsv(0.6666667f, 0, 1));
                 }
             }
-            blockBounds.Mesh = pos.Count > 0 ? Lines(pos, col, true) : null;
+            roomBounds.Mesh = pos.Count > 0 ? Lines(pos, col, true) : null;
+        }
+
+        /// <summary>Green outline of the geometry generated by the selected room attributes.</summary>
+        void UpdateAttributeOutline() {
+            if (attributeOutline == null) return;
+            var room = Doc.AttributeRoom;
+            if (room == null || Doc.SelectedAttributes.Length == 0 || !Doc.Psdl.Rooms.Contains(room)) {
+                attributeOutline.Mesh = null;
+                return;
+            }
+            var tris = CityBuilder.RoomAttributeGeometry(Doc.Psdl, Settings.Current, room, Doc.SelectedAttributes).PickTriangles;
+            // boundary edges are the ones used by a single triangle; shared (inner) edges are left out
+            var edges = new Dictionary<(Vector3, Vector3), int>();
+            var order = new List<(Vector3, Vector3)>();
+            for (int i = 0; i + 2 < tris.Count; i += 3) {
+                for (int k = 0; k < 3; k++) {
+                    var a = tris[i + k];
+                    var b = tris[i + (k + 1) % 3];
+                    var key = a < b ? (a, b) : (b, a);
+                    if (edges.TryGetValue(key, out int n)) edges[key] = n + 1;
+                    else {
+                        edges[key] = 1;
+                        order.Add(key);
+                    }
+                }
+            }
+            var pos = new List<Vector3>();
+            var col = new List<Color>();
+            var color = Color.FromHsv(0.3333333f, 0.85f, 1);
+            foreach (var key in order) {
+                if (edges[key] != 1) continue;
+                pos.Add(key.Item1); col.Add(color);
+                pos.Add(key.Item2); col.Add(color);
+            }
+            attributeOutline.Mesh = pos.Count > 0 ? Lines(pos, col, true) : null;
+        }
+
+        /// <summary>Builds the per attribute pick triangles when exactly one room is selected.</summary>
+        void UpdateAttributePicks() {
+            attributePickRoom = null;
+            attributePickTriangles = Array.Empty<Vector3>();
+            attributePickIndices = Array.Empty<int>();
+            var psdl = Doc.Psdl;
+            if (Doc.SelectedRooms.Length != 1) return;
+            int r = Doc.SelectedRooms[0];
+            if (r < 0 || r >= psdl.Rooms.Count) return;
+            var data = CityBuilder.RoomAttributeGeometry(psdl, Settings.Current, psdl.Rooms[r]);
+            attributePickRoom = psdl.Rooms[r];
+            attributePickTriangles = data.PickTriangles.ToArray();
+            attributePickIndices = data.PickAttributes.ToArray();
+        }
+
+        /// <summary>Red bounding box and translucent overlay on the selected INST objects.</summary>
+        void UpdateInstHighlight() {
+            if (instBounds == null) return;
+            ClearChildren(instHighlight);
+            var pos = new List<Vector3>();
+            var col = new List<Color>();
+            var color = Color.FromHsv(0, 0.85f, 1);
+            var components = Doc.Inst.Components;
+            foreach (int i in Doc.SelectedInst) {
+                if (i < 0 || i >= components.Count) continue;
+                var c = components[i];
+                var t = InstTransform(c);
+                var data = PkgStore.GetMeshData(c.Pkg, c.PaintJob);
+                // objects without geometry still get a 2 m marker box at their origin
+                var box = data != null && data.Surfaces.Count > 0 ? data.Bounds : new Aabb(-Vector3.One, Vector3.One * 2);
+                BoxLines(pos, col, t, box, color);
+                var mesh = PkgStore.GetMesh(data, materials);
+                if (mesh != null && mesh.GetSurfaceCount() > 0) {
+                    instHighlight.AddChild(new MeshInstance3D {
+                        Mesh = mesh,
+                        Transform = t,
+                        MaterialOverride = materials.InstHighlight(),
+                        CastShadow = GeometryInstance3D.ShadowCastingSetting.Off
+                    });
+                }
+            }
+            instBounds.Mesh = pos.Count > 0 ? Lines(pos, col, true) : null;
+        }
+
+        static void BoxLines(List<Vector3> pos, List<Color> col, Transform3D t, Aabb box, Color color) {
+            var corners = new Vector3[8];
+            for (int k = 0; k < 8; k++) corners[k] = t * box.GetEndpoint(k);
+            // GetEndpoint numbering: bit 0 = z, bit 1 = y, bit 2 = x
+            foreach (var (a, b) in new[] { (0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7) }) {
+                pos.Add(corners[a]); col.Add(color);
+                pos.Add(corners[b]); col.Add(color);
+            }
         }
 
         /// <summary>Random city wizard: horizontal plane at the water level.</summary>
@@ -506,19 +640,81 @@ namespace PsdlViewer.Render {
 
         // ---- picking ----
 
-        /// <summary>CPU ray cast against the city triangles. Returns the block index or -1.</summary>
+        /// <summary>CPU ray cast against the city triangles. Returns the room index or -1.</summary>
         public int Raycast(Vector3 origin, Vector3 direction, out Vector3 hit) {
             hit = default;
             float best = float.MaxValue;
-            int block = -1;
-            var tris = pickTriangles;
+            int t = NearestTriangle(pickTriangles, origin, direction, ref best);
+            if (t < 0) return -1;
+            hit = origin + direction * best;
+            return pickRooms[t];
+        }
+
+        /// <summary>
+        /// Ray cast against the attribute geometry of the selected room (only available while a single room is selected).
+        /// Returns the attribute index or -1.
+        /// </summary>
+        public int RaycastAttribute(Vector3 origin, Vector3 direction, out Room room, out float distance) {
+            distance = float.MaxValue;
+            room = attributePickRoom;
+            int t = NearestTriangle(attributePickTriangles, origin, direction, ref distance);
+            if (t < 0 || room == null) return -1;
+            int attribute = attributePickIndices[t];
+            return attribute >= 0 && attribute < room.Attributes.Count ? attribute : -1;
+        }
+
+        /// <summary>Index of the nearest triangle closer than best (which is updated), or -1.</summary>
+        static int NearestTriangle(Vector3[] tris, Vector3 origin, Vector3 direction, ref float best) {
+            int nearest = -1;
             for (int i = 0, t = 0; i + 2 < tris.Length; i += 3, t++) {
                 if (!IntersectTriangle(origin, direction, tris[i], tris[i + 1], tris[i + 2], out float dist) || dist >= best) continue;
                 best = dist;
-                block = pickBlocks[t];
+                nearest = t;
             }
-            if (block >= 0) hit = origin + direction * best;
-            return block;
+            return nearest;
+        }
+
+        /// <summary>CPU ray cast against the rendered INST objects. Returns the component index or -1.</summary>
+        public int RaycastInst(Vector3 origin, Vector3 direction, out float distance) {
+            distance = float.MaxValue;
+            int component = -1;
+            if (!instRoot.Visible) return -1;
+            foreach (var p in instPicks) {
+                // components removed since the last render
+                if (p.Component >= Doc.Inst.Components.Count) continue;
+                // in object space the ray is o + d * t with the same t as in world space
+                var inverse = p.Transform.AffineInverse();
+                var o = inverse * origin;
+                var d = inverse.Basis * direction;
+                if (!IntersectBox(o, d, p.Mesh.Bounds, distance)) continue;
+                foreach (var surface in p.Mesh.Surfaces) {
+                    var tris = surface.pos;
+                    for (int i = 0; i + 2 < tris.Length; i += 3) {
+                        if (!IntersectTriangle(o, d, tris[i], tris[i + 1], tris[i + 2], out float dist) || dist >= distance) continue;
+                        distance = dist;
+                        component = p.Component;
+                    }
+                }
+            }
+            return component;
+        }
+
+        static bool IntersectBox(Vector3 o, Vector3 d, Aabb box, float maxDistance) {
+            float near = 0, far = maxDistance;
+            var min = box.Position;
+            var max = box.End;
+            for (int a = 0; a < 3; a++) {
+                if (Math.Abs(d[a]) < 1e-12f) {
+                    if (o[a] < min[a] || o[a] > max[a]) return false;
+                    continue;
+                }
+                float t1 = (min[a] - o[a]) / d[a], t2 = (max[a] - o[a]) / d[a];
+                if (t1 > t2) (t1, t2) = (t2, t1);
+                near = Math.Max(near, t1);
+                far = Math.Min(far, t2);
+                if (near > far) return false;
+            }
+            return true;
         }
 
         static bool IntersectTriangle(Vector3 o, Vector3 d, Vector3 a, Vector3 b, Vector3 c, out float t) {

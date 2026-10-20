@@ -82,7 +82,7 @@ namespace PsdlViewer.UI.Panels {
                 var d = new NVector3(x, y, z);
                 foreach (int r in rows) Doc.Psdl.Vertices[r] += d;
                 Doc.NotifyChanged(DataKind.Vertices);
-                Doc.Status($"Translated {rows.Length} vertices. Use View > Refresh blocks to update the 3D view.");
+                Doc.Status($"Translated {rows.Length} vertices. Use View > Refresh rooms to update the 3D view.");
             });
         }
 

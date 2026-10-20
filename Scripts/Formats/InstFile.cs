@@ -5,8 +5,8 @@ using System.Numerics;
 
 namespace PsdlViewer.Formats {
     public abstract class InstComponent {
-        /// <summary>Index of the block the object is placed in (stored +1 in the file).</summary>
-        public int Block;
+        /// <summary>Index of the room the object is placed in (stored +1 in the file).</summary>
+        public int Room;
         /// <summary>Paint job in the low bits, other bits unknown.</summary>
         public int Modifiers;
         public string Pkg = "";
@@ -64,8 +64,9 @@ namespace PsdlViewer.Formats {
             using var stream = File.OpenRead(path);
             using var r = new BinaryReader(stream);
             progress?.Begin("Reading components", stream.Length);
+            FileLog.Print($"Reading INST file {path}");
             while (stream.Position < stream.Length) {
-                int block = r.ReadUInt16() - 1;
+                int room = r.ReadUInt16() - 1;
                 int modifiers = r.ReadUInt16();
                 int type = r.ReadByte();
                 int length = type & 0x7f;
@@ -89,12 +90,13 @@ namespace PsdlViewer.Formats {
                     cs.Origin = r.ReadVec3();
                     c = cs;
                 }
-                c.Block = block;
+                c.Room = room;
                 c.Modifiers = modifiers;
                 c.Pkg = name;
                 inst.Components.Add(c);
                 if (progress != null) progress.Value = stream.Position;
             }
+            FileLog.Print($"{inst.Components.Count} components");
             return inst;
         }
 
@@ -103,7 +105,7 @@ namespace PsdlViewer.Formats {
             using (var stream = File.Create(temp))
             using (var w = new BinaryWriter(stream)) {
                 foreach (var c in Components) {
-                    w.Write((ushort)(c.Block + 1));
+                    w.Write((ushort)(c.Room + 1));
                     w.Write((ushort)c.Modifiers);
                     byte[] name = BinaryUtil.Text.GetBytes(c.Pkg ?? "");
                     w.Write((byte)(((name.Length + 1) & 0x7f) | (c.IsSimple ? 0x80 : 0)));
@@ -124,12 +126,12 @@ namespace PsdlViewer.Formats {
             File.Move(temp, path, true);
         }
 
-        /// <summary>Keeps block references valid after the PSDL block list changed. Removed blocks drop their objects.</summary>
-        public void RemapBlocks(Func<int, int> map) {
+        /// <summary>Keeps room references valid after the PSDL room list changed. Removed rooms drop their objects.</summary>
+        public void RemapRooms(Func<int, int> map) {
             for (int i = Components.Count - 1; i >= 0; i--) {
-                int m = map(Components[i].Block);
+                int m = map(Components[i].Room);
                 if (m < 0) Components.RemoveAt(i);
-                else Components[i].Block = m;
+                else Components[i].Room = m;
             }
         }
     }

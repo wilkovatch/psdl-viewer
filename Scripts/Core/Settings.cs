@@ -33,11 +33,13 @@ namespace PsdlViewer.Core {
         public bool ShowCityBounds;
         public bool RenderInst = true;
         public bool ShowPathsets = true;
+        public bool ShowProps = true;
         public bool ShowBai = true;
         public float LabelSize = 3;
         public bool UseNativeFileDialogs = true;
         public bool LoadSiblingInst;
         public bool LoadSiblingBai;
+        public bool LoadSiblingProps;
         public float CameraFov = 60;
         public int CameraControls = CameraSchemeA;
         public bool EmulateMiddleButton;
@@ -46,18 +48,28 @@ namespace PsdlViewer.Core {
         public static Settings Current { get; private set; } = new();
         public static event Action Changed;
 
-        // texture and geometry folders next to the open PSDL file's folder; only for that file, never saved
-        static string[] fileTexturePaths = Array.Empty<string>(), fileGeometryPaths = Array.Empty<string>();
+        // texture, geometry and tune folders next to the open PSDL file's folder; only for that file, never saved
+        static string[] fileTexturePaths = Array.Empty<string>(), fileGeometryPaths = Array.Empty<string>(), fileTunePaths = Array.Empty<string>();
 
         /// <summary>The configured texture folders followed by the ones found for the open PSDL file.</summary>
         public static List<string> TextureSearchPaths => SearchPaths(Current.TexturePaths, fileTexturePaths);
         /// <summary>The configured geometry folders followed by the ones found for the open PSDL file.</summary>
         public static List<string> GeometrySearchPaths => SearchPaths(Current.GeometryPaths, fileGeometryPaths);
+        /// <summary>The tune folders next to the configured geometry folders followed by the one found for the open PSDL file.</summary>
+        public static List<string> TuneSearchPaths => SearchPaths(Current.GeometryPaths.Select(TuneNextTo).Where(d => d != null).ToList(), fileTunePaths);
 
         static List<string> SearchPaths(List<string> configured, string[] file) =>
             configured.Concat(file.Where(f => !configured.Contains(f, StringComparer.OrdinalIgnoreCase))).ToList();
 
-        /// <summary>Uses the texture and geometry folders next to the PSDL file's folder (MM2 layout) while that file is open. Returns whether they changed.</summary>
+        /// <summary>The tune folder next to a geometry folder (MM2 layout), or null.</summary>
+        static string TuneNextTo(string geometry) {
+            if (string.IsNullOrWhiteSpace(geometry)) return null;
+            string parent = Path.GetDirectoryName(Path.GetFullPath(geometry).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            string dir = parent == null ? null : Path.Combine(parent, "tune");
+            return dir != null && Directory.Exists(dir) ? dir : null;
+        }
+
+        /// <summary>Uses the texture, geometry and tune folders next to the PSDL file's folder (MM2 layout) while that file is open. Returns whether they changed.</summary>
         public static bool SetFileFolders(string psdlPath) {
             string city = Path.GetDirectoryName(Path.GetFullPath(psdlPath));
             string root = city == null ? null : Path.GetDirectoryName(city);
@@ -65,10 +77,11 @@ namespace PsdlViewer.Core {
                 string dir = root == null ? null : Path.Combine(root, name);
                 return dir != null && Directory.Exists(dir) ? new[] { dir } : Array.Empty<string>();
             }
-            string[] tex = Find("texture"), geo = Find("geometry");
-            bool changed = !tex.SequenceEqual(fileTexturePaths) || !geo.SequenceEqual(fileGeometryPaths);
+            string[] tex = Find("texture"), geo = Find("geometry"), tune = Find("tune");
+            bool changed = !tex.SequenceEqual(fileTexturePaths) || !geo.SequenceEqual(fileGeometryPaths) || !tune.SequenceEqual(fileTunePaths);
             fileTexturePaths = tex;
             fileGeometryPaths = geo;
+            fileTunePaths = tune;
             return changed;
         }
 

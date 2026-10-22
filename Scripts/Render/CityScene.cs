@@ -14,7 +14,7 @@ namespace PsdlViewer.Render {
     public partial class CityScene : Node3D {
         public static CityScene Instance { get; private set; }
 
-        Node3D cityRoot, instRoot, baiRoot, pathsetRoot, labelRoot, boundRoot, levelRoot, instHighlight;
+        Node3D cityRoot, instRoot, baiRoot, pathsetRoot, propRoot, labelRoot, boundRoot, levelRoot, instHighlight;
         MeshInstance3D vertexMarkers, roomBounds, instBounds, attributeOutline, routeMarkers;
         DirectionalLight3D headlight;
         WorldEnvironment environment;
@@ -29,6 +29,9 @@ namespace PsdlViewer.Render {
 
         public Materials Materials => materials;
         public bool Busy { get; private set; }
+        /// <summary>Number of roadside props and traffic lights placed by the last <see cref="RebuildProps"/>.</summary>
+        public int PropCount { get; private set; }
+        public int TrafficLightCount { get; private set; }
 
         public override void _Ready() {
             Instance = this;
@@ -36,6 +39,7 @@ namespace PsdlViewer.Render {
             instRoot = AddRoot("INST");
             baiRoot = AddRoot("BAI");
             pathsetRoot = AddRoot("Pathsets");
+            propRoot = AddRoot("Props");
             labelRoot = AddRoot("RoomLabels");
             boundRoot = AddRoot("CityBound");
             levelRoot = AddRoot("Level");
@@ -117,6 +121,7 @@ namespace PsdlViewer.Render {
             env.TonemapMode = Godot.Environment.ToneMapper.Linear;
             instRoot.Visible = s.RenderInst;
             pathsetRoot.Visible = s.ShowPathsets;
+            propRoot.Visible = s.ShowProps;
             baiRoot.Visible = s.ShowBai;
             labelRoot.Visible = s.ShowRoomIndices;
             boundRoot.Visible = s.ShowCityBounds;
@@ -187,7 +192,18 @@ namespace PsdlViewer.Render {
 
         static Transform3D InstTransform(InstComponent c) {
             var (x, y, z) = c.Axes;
-            return new Transform3D(new Basis(x.ToGodot(), y.ToGodot(), z.ToGodot()), c.Origin.ToGodot());
+            var t = new Transform3D(new Basis(x.ToGodot(), y.ToGodot(), z.ToGodot()), c.Origin.ToGodot());
+            return (c.Modifiers & InstComponent.FlagBanger) != 0 ? BangerTransform(c.Pkg, t) : t;
+        }
+
+        /// <summary>
+        /// Moves a banger (prop) placed at the transform's origin to its centre of gravity, where the origin of its meshes is
+        /// (tune/banger/&lt;pkg&gt;.dgBangerData).
+        /// </summary>
+        static Transform3D BangerTransform(string pkg, Transform3D t) {
+            var cg = BangerStore.GetCG(pkg);
+            if (cg == Vector3.Zero) return t;
+            return new Transform3D(t.Basis, t.Origin + t.Basis.Orthonormalized() * cg);
         }
 
         public async Task RebuildInst(Progress progress) {
@@ -234,7 +250,8 @@ namespace PsdlViewer.Render {
 
         // ---- Pathsets ----
 
-        static Basis FacingBasis(Vector3 direction) {
+        /// <summary>Rotation about the vertical axis that turns the X axis towards direction.</summary>
+        internal static Basis FacingBasis(Vector3 direction) {
             var d = new Vector3(direction.X, 0, direction.Z);
             if (d.LengthSquared() < 1e-12f) return Basis.Identity;
             d = d.Normalized();
@@ -258,7 +275,9 @@ namespace PsdlViewer.Render {
                         var mesh = PkgStore.GetMeshData(path.Name, 0);
                         if (mesh != null) {
                             if (!result.TryGetValue(mesh.Key, out var placement)) result[mesh.Key] = placement = new Placement { Mesh = mesh };
+                            int first = placement.Transforms.Count;
                             PlaceProps(path, placement.Transforms);
+                            for (int k = first; k < placement.Transforms.Count; k++) placement.Transforms[k] = BangerTransform(path.Name, placement.Transforms[k]);
                             continue;
                         }
                         var texture = TextureStore.Get(path.Name);
@@ -334,6 +353,39 @@ namespace PsdlViewer.Render {
                     batch.Positions.Add(p[z]); batch.UVs.Add(uv[z]); batch.Normals.Add(n);
                 }
             }
+        }
+
+        // ---- Props ----
+
+        /// <summary>Places the roadside props of the PSDL room paths with the loaded prop rules, and the traffic lights of the BAI file.</summary>
+        public async Task RebuildProps(Progress progress) {
+            var psdl = Doc.Psdl;
+            var rules = Doc.Props;
+            var bai = Doc.Bai;
+            int count = 0, lights = 0;
+            var missing = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            var groups = await Task.Run(() => {
+                var result = new Dictionary<string, Placement>();
+                bool Add(string model, Transform3D transform) {
+                    var mesh = PkgStore.GetMeshData(model, 0);
+                    if (mesh == null) {
+                        missing.Add(model);
+                        return false;
+                    }
+                    if (!result.TryGetValue(mesh.Key, out var p)) result[mesh.Key] = p = new Placement { Mesh = mesh };
+                    p.Transforms.Add(BangerTransform(model, transform));
+                    count++;
+                    return true;
+                }
+                if (!rules.IsEmpty) Propulator.Place(psdl, rules, (model, transform) => Add(model, transform), progress);
+                Propulator.PlaceTrafficLights(bai, rules, (model, transform) => {
+                    if (Add(model, transform)) lights++;                });
+                return result;
+            });
+            await Commit(propRoot, groups, progress, "Uploading props");
+            PropCount = count;
+            TrafficLightCount = lights;
+            if (missing.Count > 0) GD.PushWarning($"Props without geometry: {string.Join(", ", missing)}");
         }
 
         // ---- BAI ----

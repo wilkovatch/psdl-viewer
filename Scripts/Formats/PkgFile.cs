@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 
 namespace PsdlViewer.Formats {
@@ -195,13 +196,23 @@ namespace PsdlViewer.Formats {
 
         public bool HasLod(int lod) => Lods[lod].Count != 0;
 
+        /// <summary>
+        /// Shadows, the parts of a broken banger (BREAK01_H...), which only appear once it is hit, and the lamps of the traffic
+        /// lights (REDGLOWDAY_H, WALK_NIGHT_H...), which are switched on one at a time, are not drawn.
+        /// </summary>
+        static bool IsDrawn(PkgGeometry g) {
+            string n = g.Name;
+            return !n.StartsWith("SHADOW") && !n.StartsWith("BREAK") && !n.Contains("GLOWDAY") && !n.Contains("GLOWNIGHT") &&
+                   !n.Contains("WALK_DAY") && !n.Contains("WALK_NIGHT");
+        }
+
         /// <summary>Builds per-shader triangle lists for the given level of detail (falling back to lower LODs) and paint job.</summary>
         public List<PkgSurface> BuildSurfaces(int lod, int paintJob) {
-            while (lod > 0 && Lods[lod].Count == 0) lod--;
+            while (lod > 0 && !Lods[lod].Any(IsDrawn)) lod--;
             if (paintJob < 0 || paintJob >= Math.Max(PaintJobs, 1)) paintJob = 0;
             var surfaces = new Dictionary<int, PkgSurface>();
             foreach (var g in Lods[lod]) {
-                if (g.Name.StartsWith("SHADOW")) continue;
+                if (!IsDrawn(g)) continue;
                 foreach (var section in g.Sections) {
                     int shaderIndex = paintJob * ShadersPerPaintJob + section.ShaderOffset;
                     if (!surfaces.TryGetValue(shaderIndex, out var surface)) {

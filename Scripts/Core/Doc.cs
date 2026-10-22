@@ -8,7 +8,7 @@ namespace PsdlViewer.Core {
     public enum DataKind { Vertices, Heights, Textures, Rooms, RoomPaths, Inst, Bai, Pathsets, Dimensions }
 
     /// <summary>
-    /// The open documents (PSDL, INST, BAI, pathsets) plus the selection events that link the views together,
+    /// The open documents (PSDL, INST, BAI, pathsets, prop rules) plus the selection events that link the views together,
     /// the counterpart of the original viewer's Config class.
     /// </summary>
     public static class Doc {
@@ -16,14 +16,18 @@ namespace PsdlViewer.Core {
         public static InstFile Inst { get; private set; } = new();
         public static BaiFile Bai { get; private set; } = new();
         public static List<Pathset> Pathsets { get; } = new();
+        public static PropRuleSet Props { get; private set; } = new();
         public static string PsdlPath = "";
         public static string InstPath = "";
         public static string BaiPath = "";
+        /// <summary>Folder of the prop rule files.</summary>
+        public static string PropsPath = "";
 
         /// <summary>A new PSDL replaced the current one: every list must reload.</summary>
         public static event Action PsdlReplaced;
         public static event Action InstReplaced;
         public static event Action BaiReplaced;
+        public static event Action PropsReplaced;
         /// <summary>The content of a list changed (rows added, removed or edited).</summary>
         public static event Action<DataKind> DataChanged;
         /// <summary>Vertices picked in a vertex list (indices into the vertex list).</summary>
@@ -66,6 +70,12 @@ namespace PsdlViewer.Core {
             Bai = bai;
             BaiPath = path ?? "";
             BaiReplaced?.Invoke();
+        }
+
+        public static void SetProps(PropRuleSet props, string path) {
+            Props = props;
+            PropsPath = path ?? "";
+            PropsReplaced?.Invoke();
         }
 
         public static void NotifyChanged(DataKind kind) => DataChanged?.Invoke(kind);

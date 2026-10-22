@@ -9,9 +9,9 @@ This is a Godot 4.7 port (with scripts written in C#) of the original PSDL Viewe
 
 ## Features
 
-- **Supported files**: PSDL files (open, save, append another PSDL file, import vertices, export a text dump), INST and BAI files (open and save), and pathsets (open). Files can also be opened by dropping them onto the window. The INST and BAI files next to a PSDL file with the same name (`sf.psdl` → `sf.inst`, `sf.bai`) can be loaded with it automatically, which you can turn on in the open dialog. The `texture` and `geometry` folders next to the PSDL file's folder are also searched while that file is open, after the folders set in the options.
-- **3D view** of the city, including tunnels and railings: fill or line drawing, lit or unlit, with grey, random, texture index or texture map colouring, plus optional room indices, room bounds, city bounds, INST meshes, pathsets and BAI routes.
-- **Editing panels** for rooms and their attributes, vertices, textures, heights, room paths, INST entries, BAI routes and pathsets. Each panel can be moved to the left, center or bottom dock and renamed.
+- **Supported files**: PSDL files (open, save, append another PSDL file, import vertices, export a text dump), INST and BAI files (open and save), pathsets (open), and props (open a city folder with *File→Open props folder*: its `propdefs.csv` and `proprules.csv` prop rules, which place props such as street lights along the roads of the PSDL room paths, and its `props.pathset`). The traffic lights of the BAI routes are shown with the props, using the models named in the city's `.aimap` file (`sf.aimap`) or the default ones. Files can also be opened by dropping them onto the window. The INST and BAI files next to a PSDL file with the same name (`sf.psdl` → `sf.inst`, `sf.bai`) and the props of the folder with the same name (`sf.psdl` → `sf/`) can be loaded with it automatically, which you can turn on in the open dialog. The `texture` and `geometry` folders next to the PSDL file's folder are also searched while that file is open, after the folders set in the options. The props are placed using their banger data (`tune/banger/<name>.dgBangerData`), read from the `tune` folder next to the PSDL file's folder or next to the geometry folders set in the options.
+- **3D view** of the city, including tunnels and railings: fill or line drawing, lit or unlit, with grey, random, texture index or texture map colouring, plus optional room indices, room bounds, city bounds, INST meshes, pathsets, props and BAI routes.
+- **Editing panels** for rooms and their attributes, vertices, textures, heights, room paths, INST entries, BAI routes and pathsets, and a list of the loaded prop rules. Each panel can be moved to the left, center or bottom dock and renamed.
 - **Tools** (*Tools* menu): automatic neighbours, last attribute flags, room flags, room sorting, dimensions and facade bounds; generating a basic CPVS file from the perimeters; and a random city generator.
 - **Console** (*View→Views→Console*) with the messages and errors of the program.
 
@@ -53,7 +53,7 @@ All the code is under `Scripts/`:
 
 | Folder | Purpose |
 |---|---|
-| `Scripts/Formats` | Readers and writers for the file formats: PSDL (and its XML form), INST, BAI, pathsets, PKG meshes and TEX textures. |
+| `Scripts/Formats` | Readers and writers for the file formats: PSDL (and its XML form), INST, BAI, pathsets, prop rules, PKG meshes and TEX textures. |
 | `Scripts/Core` | The open document, the settings, the log, the editing tools and the random city generator. |
 | `Scripts/Render` | Generation of the 3D city, with its materials, textures and meshes. |
 | `Scripts/UI` | The 3D view, the docks, the panels and the dialogs. |
@@ -61,7 +61,7 @@ All the code is under `Scripts/`:
 
 A description for the PSDL format can be found in [the angel-file-formats repository by Dummiesman](https://github.com/Dummiesman/angel-file-formats/blob/master/Midtown%20Madness%202/PSDL.md).
 
-The generation of tunnels, railings, slivers and the ground texture mapping, as well as the interpretation of several fields the specification lists as unknown, are based on [mmclone_v2 by Dummiesman](https://github.com/Dummiesman/mmclone_v2).
+The generation of tunnels, railings, slivers and the ground texture mapping, the placement of the props from the prop rules, as well as the interpretation of several fields the specification lists as unknown, are based on [mmclone_v2 by Dummiesman](https://github.com/Dummiesman/mmclone_v2).
 
 ## License
 

@@ -256,7 +256,7 @@ namespace PsdlViewer {
         void UpdateCounts() {
             var p = Doc.Psdl;
             string name = string.IsNullOrEmpty(Doc.PsdlPath) ? "untitled" : Path.GetFileName(Doc.PsdlPath);
-            countsLabel.Text = $"{name}   {p.Vertices.Count} vertices   {p.Heights.Count} heights   {p.Textures.Count} textures   {p.Rooms.Count} rooms   {p.RoomPaths.Count} room paths   {Doc.Inst.Components.Count} INST   {Doc.Bai.Routes.Count} routes";
+            countsLabel.Text = $"{name}   {p.Vertices.Count} vertices   {p.Heights.Count} heights   {p.Textures.Count} textures   {p.Rooms.Count} rooms   {p.RoomPaths.Count} room paths   {Doc.Inst.Components.Count} INST   {Doc.Bai.Routes.Count} routes   {scene.PropCount} props";
             GetWindow().Title = $"PSDL Viewer - {name}";
         }
 
@@ -287,8 +287,8 @@ namespace PsdlViewer {
         // ---- menu ----
 
         enum Cmd {
-            New, Open, Save, OpenInst, SaveInst, OpenBai, SaveBai, OpenPathset, ImportVertices, AppendPsdl, ExportText, Options, Exit,
-            ViewRooms, ViewVertices, ViewTextures, ViewHeights, ViewRoomPaths, ViewInst, ViewRoutes, ViewTerrain, ViewPathsets, ViewConsole, RefreshRooms, FlushTextures, ResetLayout,
+            New, Open, Save, OpenInst, SaveInst, OpenBai, SaveBai, OpenPathset, OpenProps, ImportVertices, AppendPsdl, ExportText, Options, Exit,
+            ViewRooms, ViewVertices, ViewTextures, ViewHeights, ViewRoomPaths, ViewInst, ViewRoutes, ViewTerrain, ViewPathsets, ViewProps, ViewConsole, RefreshRooms, FlushTextures, ResetLayout,
             AutoNeighbours, AutoLastAttr, AutoRoomFlags, AutoRoomSort, AutoDimensions, RandomTerrain, AutoFacadeBounds, GenerateCpvs,
             ListAttributes, About
         }
@@ -307,6 +307,7 @@ namespace PsdlViewer {
             Item(file, "Save BAI...", Cmd.SaveBai);
             file.AddSeparator();
             Item(file, "Open pathset...", Cmd.OpenPathset);
+            Item(file, "Open props folder...", Cmd.OpenProps);
             file.AddSeparator();
             Item(file, "Import vertices...", Cmd.ImportVertices);
             Item(file, "Append PSDL file...", Cmd.AppendPsdl);
@@ -328,6 +329,7 @@ namespace PsdlViewer {
             Item(views, "BAI route list", Cmd.ViewRoutes, Key.None);
             Item(views, "Terrain view", Cmd.ViewTerrain, Key.Key3, true);
             Item(views, "Pathset list", Cmd.ViewPathsets, Key.None);
+            Item(views, "Props list", Cmd.ViewProps, Key.None);
             Item(views, "Console", Cmd.ViewConsole, Key.None);
             view.AddChild(views);
             view.AddSubmenuNodeItem("Views", views);
@@ -380,10 +382,14 @@ namespace PsdlViewer {
                     break;
                 case Cmd.Open:
                     Dialogs.OpenFile("Open PSDL file", new[] { "*.psdl ; PSDL files", "*.xml ; PSDL-ML files" },
-                        new[] { ("Load sibling INST", Settings.Current.LoadSiblingInst), ("Load sibling BAI", Settings.Current.LoadSiblingBai) },
+                        new[] {
+                            ("Load sibling INST", Settings.Current.LoadSiblingInst), ("Load sibling BAI", Settings.Current.LoadSiblingBai),
+                            ("Load sibling props", Settings.Current.LoadSiblingProps)
+                        },
                         (path, options) => {
                             Settings.Current.LoadSiblingInst = options[0];
                             Settings.Current.LoadSiblingBai = options[1];
+                            Settings.Current.LoadSiblingProps = options[2];
                             Settings.Save();
                             OpenPsdl(path);
                         });
@@ -418,7 +424,7 @@ namespace PsdlViewer {
                     Dialogs.OpenFile("Open BAI file", new[] { "*.bai ; BAI files" }, path => _ = Run("Opening BAI file", async p => {
                         var bai = await Task.Run(() => BaiFile.Load(path, p));
                         Doc.SetBai(bai, path);
-                        await scene.RebuildBai(p);
+                        await RebuildBai(p);
                         SetStatus($"Loaded {bai.Routes.Count} routes from {path}");
                     }));
                     break;
@@ -435,6 +441,9 @@ namespace PsdlViewer {
                     break;
                 case Cmd.OpenPathset:
                     OpenPathset();
+                    break;
+                case Cmd.OpenProps:
+                    OpenProps();
                     break;
                 case Cmd.ImportVertices:
                     Dialogs.OpenFile("Import vertices (one \"x,y,z\" per line)", new[] { "*.txt, *.csv ; Text files", "* ; All files" }, path => {
@@ -481,12 +490,14 @@ namespace PsdlViewer {
                 case Cmd.ViewRoutes: OpenPanel(new RoutesPanel(), bottomDock); break;
                 case Cmd.ViewTerrain: OpenPanel(new TerrainView(), centerDock); break;
                 case Cmd.ViewPathsets: OpenPanel(new PathsetsPanel()); break;
+                case Cmd.ViewProps: OpenPanel(new PropsPanel()); break;
                 case Cmd.ViewConsole: ShowSingleton<ConsolePanel>(() => new ConsolePanel(), bottomDock); break;
                 case Cmd.RefreshRooms: _ = RefreshRooms("Rendering terrain"); break;
                 case Cmd.FlushTextures:
                     _ = Run("Rendering terrain", async p => {
                         TextureStore.Flush();
                         PkgStore.Flush();
+                        BangerStore.Flush();
                         scene.ApplySettings();
                         await RenderAll(p);
                     });
@@ -588,11 +599,15 @@ namespace PsdlViewer {
                     case ".bai":
                         _ = Run("Opening BAI file", async p => {
                             Doc.SetBai(await Task.Run(() => BaiFile.Load(f, p)), f);
-                            await scene.RebuildBai(p);
+                            await RebuildBai(p);
                         });
                         break;
                     case ".pathset":
                         _ = LoadPathset(f);
+                        break;
+                    case ".csv" when Path.GetFileName(f).Equals(PropRuleSet.DefsFile, StringComparison.OrdinalIgnoreCase)
+                                     || Path.GetFileName(f).Equals(PropRuleSet.RulesFile, StringComparison.OrdinalIgnoreCase):
+                        _ = OpenPropsFolder(Path.GetDirectoryName(Path.GetFullPath(f)));
                         break;
                 }
             }
@@ -612,6 +627,7 @@ namespace PsdlViewer {
                         Doc.SetPsdl(psdl, path);
                         if (Settings.Current.LoadSiblingInst) await LoadSiblingInst(path, p);
                         if (Settings.Current.LoadSiblingBai) await LoadSiblingBai(path, p);
+                        if (Settings.Current.LoadSiblingProps) await LoadSiblingProps(path);
                         await RenderAll(p);
                     });
                 });
@@ -624,10 +640,12 @@ namespace PsdlViewer {
                 Doc.SetPsdl(psdl, path);
                 string inst = Settings.Current.LoadSiblingInst ? await LoadSiblingInst(path, p) : null;
                 string bai = Settings.Current.LoadSiblingBai ? await LoadSiblingBai(path, p) : null;
+                string props = Settings.Current.LoadSiblingProps ? await LoadSiblingProps(path) : null;
                 await RenderAll(p);
                 string status = $"{(psdl.LoadError == null ? "Loaded" : "Partially loaded")} {path}";
                 if (inst != null) status += $", {Doc.Inst.Components.Count} INST components from {inst}";
                 if (bai != null) status += $", {Doc.Bai.Routes.Count} routes from {bai}";
+                if (props != null) status += $", {props}";
                 SetStatus(status);
                 ReportLoadError(psdl, path);
             });
@@ -639,12 +657,16 @@ namespace PsdlViewer {
             Dialogs.Warning($"{Path.GetFileName(path)} is damaged: {psdl.LoadError}\nShowing the data that was read before that point.");
         }
 
-        /// <summary>Drops the current INST and BAI files so they do not stay attached to a newly opened PSDL.</summary>
+        /// <summary>Drops the current INST, BAI and props files so they do not stay attached to a newly opened PSDL.</summary>
         async Task UnloadSiblings(Progress p) {
             Doc.SetInst(new InstFile(), null);
             Doc.SetBai(new BaiFile(), null);
+            Doc.SetProps(new PropRuleSet(), null);
+            RemovePropsPathset();
             await scene.RebuildInst(p);
             await scene.RebuildBai(p);
+            await scene.RebuildProps(p);
+            await scene.RebuildPathsets(p);
         }
 
         /// <summary>Loads the INST file next to a PSDL file with the same base name (sf.psdl -> sf.inst), if there is one. Returns its path, or null.</summary>
@@ -654,6 +676,26 @@ namespace PsdlViewer {
         /// <summary>Loads the BAI file next to a PSDL file with the same base name (sf.psdl -> sf.bai), if there is one. Returns its path, or null.</summary>
         Task<string> LoadSiblingBai(string psdlPath, Progress p) =>
             LoadSibling(psdlPath, ".bai", "BAI", path => BaiFile.Load(path, p), Doc.SetBai);
+
+        /// <summary>
+        /// Loads the prop rules and props.pathset of the city folder next to a PSDL file with the same base name (sf.psdl -> sf), if
+        /// there is one. Returns a description of what was loaded, or null.
+        /// </summary>
+        async Task<string> LoadSiblingProps(string psdlPath) {
+            string folder = SiblingPropsFolder(psdlPath);
+            if (!Directory.Exists(folder)) return null;
+            try {
+                return await LoadPropsFolder(folder);
+            } catch (Exception e) {
+                GD.PrintErr(e.ToString());
+                Dialogs.Error($"Opening props in {folder}: {e.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>The city folder of a PSDL file in the MM2 layout (city/sf.psdl -> city/sf).</summary>
+        static string SiblingPropsFolder(string psdlPath) =>
+            Path.Combine(Path.GetDirectoryName(Path.GetFullPath(psdlPath)) ?? "", Path.GetFileNameWithoutExtension(psdlPath));
 
         static async Task<string> LoadSibling<T>(string psdlPath, string extension, string kind, Func<string, T> load, Action<T, string> set) {
             string path = Path.ChangeExtension(psdlPath, extension);
@@ -673,26 +715,95 @@ namespace PsdlViewer {
             if (!Settings.SetFileFolders(psdlPath)) return;
             TextureStore.Flush();
             PkgStore.Flush();
+            BangerStore.Flush();
         }
 
         public async Task ReplacePsdl(PsdlFile psdl, string title, string path = null) {
             await Run(title, async p => {
                 Doc.SetPsdl(psdl, path ?? Doc.PsdlPath);
                 await scene.RebuildPsdl(p);
+                await scene.RebuildProps(p);
             });
         }
 
-        public Task RefreshRooms(string title) => Run(title, p => scene.RebuildPsdl(p));
+        /// <summary>Redraws the rooms and the roadside props that follow their roads.</summary>
+        public Task RefreshRooms(string title) => Run(title, async p => {
+            await scene.RebuildPsdl(p);
+            await scene.RebuildProps(p);
+        });
 
         async Task RenderAll(Progress p) {
             await scene.RebuildPsdl(p);
             await scene.RebuildInst(p);
             await scene.RebuildBai(p);
             await scene.RebuildPathsets(p);
+            await scene.RebuildProps(p);
+        }
+
+        /// <summary>Redraws the BAI routes and the props, which include the traffic lights of the routes.</summary>
+        async Task RebuildBai(Progress p) {
+            await scene.RebuildBai(p);
+            await scene.RebuildProps(p);
         }
 
         public void RenderInst() => _ = Run("Rendering INST", p => scene.RebuildInst(p));
         public void RenderPathsets() => _ = Run("Rendering pathsets", p => scene.RebuildPathsets(p));
+        public void RenderProps() => _ = Run("Rendering props", p => scene.RebuildProps(p));
+
+        /// <summary>The props.pathset loaded with the prop rules, removed again when other props are loaded.</summary>
+        Pathset propsPathset;
+
+        public void OpenProps() {
+            string start = Doc.PropsPath;
+            if (string.IsNullOrEmpty(start) && !string.IsNullOrEmpty(Doc.PsdlPath)) start = SiblingPropsFolder(Doc.PsdlPath);
+            Dialogs.OpenFolder("Open props folder (city/<name>)", Directory.Exists(start) ? start : null, folder => _ = OpenPropsFolder(folder));
+        }
+
+        Task OpenPropsFolder(string folder) {
+            return Run("Opening props", async p => {
+                string loaded = await LoadPropsFolder(folder);
+                if (loaded == null) {
+                    Dialogs.Error($"No {PropRuleSet.DefsFile}, {PropRuleSet.RulesFile} or {PropsPathsetFile} in {folder}.");
+                    return;
+                }
+                await scene.RebuildProps(p);
+                await scene.RebuildPathsets(p);
+                SetStatus($"Loaded {loaded}, {scene.PropCount} roadside props placed ({scene.TrafficLightCount} traffic lights)");
+            });
+        }
+
+        const string PropsPathsetFile = "props.pathset";
+
+        /// <summary>
+        /// Replaces the props with the prop rules and props.pathset of a city folder. Returns a description of what was loaded, or
+        /// null (keeping the current props) when the folder contains neither.
+        /// </summary>
+        async Task<string> LoadPropsFolder(string folder) {
+            string pathsetPath = Path.Combine(folder, PropsPathsetFile);
+            bool hasRules = PropRuleSet.Exists(folder), hasPathset = File.Exists(pathsetPath);
+            if (!hasRules && !hasPathset) return null;
+            var rules = await Task.Run(() => PropRuleSet.Load(folder));
+            var parts = new List<string>();
+            if (hasRules) parts.Add($"{rules.Rules.Count} prop rules");
+            Doc.SetProps(rules, folder);
+            RemovePropsPathset();
+            string full = Path.GetFullPath(pathsetPath);
+            // a props.pathset opened by hand stays as it is
+            if (hasPathset && !Doc.Pathsets.Any(s => s.FileName != "" && string.Equals(Path.GetFullPath(s.FileName), full, StringComparison.OrdinalIgnoreCase))) {
+                var set = await Task.Run(() => Pathset.Load(pathsetPath));
+                Doc.Pathsets.Add(set);
+                propsPathset = set;
+                Doc.NotifyChanged(DataKind.Pathsets);
+                parts.Add($"{set.Paths.Count} prop paths");
+            }
+            return parts.Count == 0 ? $"props from {folder}" : $"{string.Join(" and ", parts)} from {folder}";
+        }
+
+        void RemovePropsPathset() {
+            if (propsPathset == null) return;
+            if (Doc.Pathsets.Remove(propsPathset)) Doc.NotifyChanged(DataKind.Pathsets);
+            propsPathset = null;
+        }
 
         public void OpenPathset() {
             Dialogs.OpenFile("Open pathset file", new[] { "*.pathset ; Pathset files" }, path => _ = LoadPathset(path));
@@ -723,11 +834,13 @@ namespace PsdlViewer {
                 if (paths) {
                     TextureStore.Flush();
                     PkgStore.Flush();
+                    BangerStore.Flush();
                 }
                 if (city) await scene.RebuildPsdl(p);
                 if (props) {
                     await scene.RebuildInst(p);
                     await scene.RebuildPathsets(p);
+                    await scene.RebuildProps(p);
                     await scene.RebuildBai(p);
                 }
             });
@@ -740,7 +853,7 @@ namespace PsdlViewer {
             }
         }
 
-        // ---- command line: --psdl, --inst, --bai, --sibling-inst, --sibling-bai, --pathset, --screenshot <png>, --camera x,y,z,pitch,yaw ----
+        // ---- command line: --psdl, --inst, --bai, --sibling-inst, --sibling-bai, --pathset, --props <folder>, --sibling-props, --screenshot <png>, --camera x,y,z,pitch,yaw ----
 
         async void HandleCommandLine() {
             var args = OS.GetCmdlineUserArgs();
@@ -771,14 +884,21 @@ namespace PsdlViewer {
                 }
                 if (Arg("--bai") is string bai) {
                     Doc.SetBai(await Task.Run(() => BaiFile.Load(bai, p)), bai);
-                    await scene.RebuildBai(p);
+                    await RebuildBai(p);
                 } else if (args.Contains("--sibling-bai") && await LoadSiblingBai(psdl, p) != null) {
-                    await scene.RebuildBai(p);
+                    await RebuildBai(p);
                 }
                 if (Arg("--pathset") is string ps) {
                     Doc.Pathsets.Add(await Task.Run(() => Pathset.Load(ps)));
                     Doc.NotifyChanged(DataKind.Pathsets);
                     await scene.RebuildPathsets(p);
+                }
+                string props = Arg("--props") is string folder ? await LoadPropsFolder(folder)
+                    : args.Contains("--sibling-props") ? await LoadSiblingProps(psdl) : null;
+                if (props != null) {
+                    await scene.RebuildProps(p);
+                    await scene.RebuildPathsets(p);
+                    GD.Print($"Loaded {props}, {scene.PropCount} roadside props placed ({scene.TrafficLightCount} traffic lights)");
                 }
             });
             if (Arg("--select") is string sel && BinaryUtil.TryParseHex(sel, out int room)) Doc.SelectRooms(new[] { room }, null);

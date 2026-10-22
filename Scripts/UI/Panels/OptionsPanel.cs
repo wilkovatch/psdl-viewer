@@ -59,6 +59,7 @@ namespace PsdlViewer.UI.Panels {
             grid.AddCheck("Native file dialogs", () => edit.UseNativeFileDialogs, v => edit.UseNativeFileDialogs = v, "Use the operating system's file picker instead of Godot's");
             grid.AddCheck("Load sibling INST", () => edit.LoadSiblingInst, v => edit.LoadSiblingInst = v, "When opening a PSDL file, also open the INST file next to it with the same name (sf.psdl -> sf.inst)");
             grid.AddCheck("Load sibling BAI", () => edit.LoadSiblingBai, v => edit.LoadSiblingBai = v, "When opening a PSDL file, also open the BAI file next to it with the same name (sf.psdl -> sf.bai)");
+            grid.AddCheck("Load sibling props", () => edit.LoadSiblingProps, v => edit.LoadSiblingProps = v, "When opening a PSDL file, also open the prop rules and props.pathset in the folder next to it with the same name (sf.psdl -> sf)");
             box.AddChild(grid);
             box.AddChild(PathList("Texture folders (searched for .tex, .gif, .jpg, .tga, .png, .bmp)", edit.TexturePaths));
             box.AddChild(PathList("Geometry folders (searched for .pkg)", edit.GeometryPaths));
@@ -115,6 +116,7 @@ namespace PsdlViewer.UI.Panels {
             grid.AddCheck("Show city bounds", () => edit.ShowCityBounds, v => edit.ShowCityBounds = v, "Bounding sphere from the PSDL dimensions");
             grid.AddCheck("Render INST", () => edit.RenderInst, v => edit.RenderInst = v);
             grid.AddCheck("Show pathsets", () => edit.ShowPathsets, v => edit.ShowPathsets = v);
+            grid.AddCheck("Show props", () => edit.ShowProps, v => edit.ShowProps = v, "Roadside props placed by the prop rules");
             grid.AddCheck("Show BAI", () => edit.ShowBai, v => edit.ShowBai = v);
             grid.AddFloat("Room label size", () => edit.LabelSize, v => edit.LabelSize = Math.Clamp(v, 0.1f, 100), "Height of the room index labels in metres");
             grid.AddFloat("Field of view", () => edit.CameraFov, v => edit.CameraFov = Math.Clamp(v, 5, 150), "Degrees");

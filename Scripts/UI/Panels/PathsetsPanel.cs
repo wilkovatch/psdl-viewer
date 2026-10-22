@@ -29,7 +29,7 @@ namespace PsdlViewer.UI.Panels {
             sets.AddColumn("Index", 46);
             sets.AddColumn("File", 220);
             sets.AddColumn("Paths", 50, false, HorizontalAlignment.Right);
-            sets.AddColumn("Unknown 0", 76, true);
+            sets.AddColumn("Current path", 84, true);
             sets.CustomMinimumSize = new Vector2(100, 70);
             sets.RowCount = () => Doc.Pathsets.Count;
             sets.GetCell = (r, c) => {
@@ -191,10 +191,10 @@ namespace PsdlViewer.UI.Panels {
             if (currentPath == null) return;
             var p = currentPath;
             pathGrid.AddText("Name:", () => p.Name, v => p.Name = v.Trim(), "PKG (prop) or texture (decal) name");
-            pathGrid.AddHex("Unknown 1:", () => (int)p.Unknown1, v => p.Unknown1 = (uint)v, 8);
+            pathGrid.AddHex("Unknown 1:", () => (int)p.Unknown1, v => p.Unknown1 = (uint)v, 8, "Possibly flags, meaning unknown");
             pathGrid.AddOption("Type", PropPath.TypeNames, () => Math.Clamp(p.Type, 0, 2), v => p.Type = v);
-            pathGrid.AddFloat("Spacing:", () => p.Spacing, v => p.Spacing = v, "Metres between props on line strips");
-            pathGrid.AddHex("Unknown 3:", () => p.Unknown3, v => p.Unknown3 = v & 0xffff);
+            pathGrid.AddFloat("Spacing:", () => p.Spacing, v => p.Spacing = v, "Metres between props on line strips, 0 = 5 metres");
+            pathGrid.AddHex("Padding:", () => p.Unknown3, v => p.Unknown3 = v & 0xffff);
         }
 
         void SaveSelected() {

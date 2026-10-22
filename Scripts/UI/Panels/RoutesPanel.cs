@@ -74,10 +74,17 @@ namespace PsdlViewer.UI.Panels {
             var routeBox = new VBoxContainer { Name = "Route" };
             var grid = new PropertyGrid();
             grid.AddHex("ID:", () => route.Id, v => route.Id = v & 0xffff);
-            grid.AddHex("Unknown 0:", () => route.Unknown0, v => route.Unknown0 = v & 0xffff, 4, "Flags");
-            grid.AddFloat("Unknown 1:", () => route.Unknown1, v => route.Unknown1 = v, "Half width?");
-            grid.AddFloat("Unknown 2:", () => route.Unknown2, v => route.Unknown2 = v, "Base speed?");
-            grid.Changed += () => table.Refresh();
+            grid.AddHex("Flags:", () => route.Flags, v => route.Flags = v & 0xffff);
+            for (int i = 0; i < BaiRoute.FlagNames.Length; i++) {
+                int bit = 1 << i;
+                grid.AddCheck(BaiRoute.FlagNames[i], () => (route.Flags & bit) != 0, v => route.Flags = v ? route.Flags | bit : route.Flags & ~bit, BaiRoute.FlagDescriptions[i]);
+            }
+            grid.AddFloat("Half width:", () => route.HalfWidth, v => route.HalfWidth = v, "Half the width of the road");
+            grid.AddFloat("Base speed:", () => route.BaseSpeed, v => route.BaseSpeed = v, "Base speed of the vehicles; MM2 overrides it with the race aimap file");
+            grid.Changed += () => {
+                grid.Refresh();
+                table.Refresh();
+            };
             routeBox.AddChild(grid);
             var rooms = new ListEditor("Rooms");
             rooms.BindInts(() => route.Rooms, ListEditor.RoomInfo, false, true, "Room");
@@ -86,7 +93,7 @@ namespace PsdlViewer.UI.Panels {
             detail.AddChild(routeBox);
 
             var center = Table(n, ("Distance", At(route.CentralDistances)), ("Center", At(route.CentralLine)), ("X", At(route.XOrientation)),
-                ("Y", At(route.YOrientation)), ("Z", At(route.ZOrientation)), ("W", At(route.WOrientation)));
+                ("Y", At(route.YOrientation)), ("Z", At(route.ZOrientation)), ("Tangent", At(route.Tangents)));
             foreach (var col in center.Columns.Skip(2)) col.Width = 170;
             center.Name = "Center line";
             detail.AddChild(center);
@@ -103,11 +110,13 @@ namespace PsdlViewer.UI.Panels {
             scroll.AddChild(box);
             var grid = new PropertyGrid();
             grid.AddInfo("Lanes:", () => $"{d.Lanes} lanes, {d.Trams} tram rails, {d.Trains} train rails");
-            grid.AddHex("Unknown 3:", () => d.Unknown3, v => d.Unknown3 = v & 0xffff);
-            grid.AddHex("Unknown 4:", () => d.Unknown4, v => d.Unknown4 = v & 0xffff, 4, "Ambient types?");
+            grid.AddHex("Sidewalks:", () => d.Sidewalks, v => d.Sidewalks = v & 0xffff, 4, "Number of sidewalks, always 1");
+            grid.AddHex("Ambient types:", () => d.AmbientTypes, v => d.AmbientTypes = v & 0xffff, 4, "0 = vehicles and pedestrians, 1 = pedestrians, 2 = vehicles, 3 = nobody");
+            grid.Changed += grid.Refresh;
+            grid.AddInfo("", () => d.AmbientTypes >= 0 && d.AmbientTypes < BaiRoadData.AmbientNames.Length ? BaiRoadData.AmbientNames[d.AmbientTypes] : "Unknown value");
             box.AddChild(grid);
 
-            var laneColumns = new List<(string, Func<int, string>)> { ("Distance", At(d.Distances)) };
+            var laneColumns = new List<(string, Func<int, string>)> { ("Edge distance", At(d.Distances)) };
             for (int k = 0; k < d.Lanes; k++) {
                 int lane = k;
                 laneColumns.Add(($"Distance {lane}", i => lane * n + i < d.LaneDistances.Count ? BinaryUtil.F(d.LaneDistances[lane * n + i]) : ""));
@@ -115,8 +124,8 @@ namespace PsdlViewer.UI.Panels {
             }
             box.AddChild(new Label { Text = "Lanes" });
             box.AddChild(Table(n, laneColumns.ToArray()));
-            box.AddChild(new Label { Text = "Unknown" });
-            box.AddChild(Table(d.Unknown0.Count, ("Unknown", At(d.Unknown0))));
+            box.AddChild(new Label { Text = "Last edge distance, 10 unknown values, one unknown value per lane" });
+            box.AddChild(Table(d.Unknown0.Count, ("Value", At(d.Unknown0))));
             box.AddChild(new Label { Text = "Sidewalks" });
             box.AddChild(Table(n, ("Inner", At(d.SidewalkInner)), ("Center", At(d.SidewalkCenter)), ("Outer", At(d.SidewalkOuter))));
             if (d.Trams > 0) {
@@ -134,12 +143,16 @@ namespace PsdlViewer.UI.Panels {
 
         static Control RoadEnd(string name, BaiRoadEnd e) {
             var grid = new PropertyGrid { Name = name };
-            grid.AddHex("Intersection:", () => (int)e.Intersection, v => e.Intersection = (uint)v, 8);
-            grid.AddHex("Unknown 0:", () => e.Unknown0, v => e.Unknown0 = v & 0xffff);
-            grid.AddHex("Unknown 1:", () => (int)e.Unknown1, v => e.Unknown1 = (uint)v, 8, "Vehicle rule?");
-            grid.AddHex("Unknown 2:", () => (int)e.Unknown2, v => e.Unknown2 = (uint)v, 8);
-            grid.AddVector("Origin:", () => e.Origin, v => e.Origin = v);
-            grid.AddVector("Axis:", () => e.Axis, v => e.Axis = v);
+            grid.AddHex("Intersection:", () => (int)e.Intersection, v => e.Intersection = (uint)v, 8, "Intersection ID, cdcdcdcd = none");
+            grid.AddHex("Unknown 0:", () => e.Unknown0, v => e.Unknown0 = v & 0xffff, 4, "Always cdcd");
+            grid.AddHex("Vehicle rule:", () => (int)e.VehicleRule, v => e.VehicleRule = (uint)v, 8,
+                "0 = stop sign, 1 = traffic light (all roads of the intersection must use it), 2 = always stop, 3 = never stop");
+            grid.Changed += grid.Refresh;
+            grid.AddInfo("", () => e.VehicleRule < BaiRoadEnd.RuleNames.Length ? BaiRoadEnd.RuleNames[e.VehicleRule] : "Unknown value");
+            grid.AddHex("Road index:", () => (int)e.IntersectionRoadIndex, v => e.IntersectionRoadIndex = (uint)v, 8,
+                "Index of this road in the intersection's road list, cdcdcdcd = none");
+            grid.AddVector("Traffic light:", () => e.Origin, v => e.Origin = v);
+            grid.AddVector("Light axis:", () => e.Axis, v => e.Axis = v);
             return grid;
         }
 

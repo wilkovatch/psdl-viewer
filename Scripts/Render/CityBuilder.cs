@@ -29,11 +29,14 @@ namespace PsdlViewer.Render {
     }
 
     /// <summary>
-    /// Turns PSDL rooms into geometry the same way the original viewer did (Terrain.createBlockObject and the Shape_* classes).
+    /// Turns PSDL rooms into geometry the same way the original viewer did (Terrain.createBlockObject and the Shape_* classes),
+    /// with the ground mapping, slivers and tunnels following the game.
     /// Input triangles are counter-clockwise (Java3D convention) and get flipped for Godot.
     /// </summary>
     public class CityBuilder {
         const float SidewalkHeight = 0.15f;
+        /// <summary>Ground textures repeat every 8 metres.</summary>
+        const float GroundScale = 0.125f;
         readonly PsdlFile psdl;
         readonly Settings settings;
         readonly CityMeshData data = new();
@@ -171,11 +174,13 @@ namespace PsdlViewer.Render {
                         case SliverAttribute s:
                             Sliver(s, texture);
                             break;
-                        case TunnelAttribute:
+                        case TunnelAttribute t:
+                            Tunnel(room, i, t, texture);
+                            break;
                         case RawAttribute:
                             NotRendered(a);
                             break;
-                        // facade bounds are not rendered either, but the original viewer didn't report them
+                        // facade bounds are collision only, so they are not rendered (the original viewer didn't report them)
                     }
                 } catch (Exception e) {
                     Fail(e);
@@ -459,18 +464,14 @@ namespace PsdlViewer.Render {
             if (sections < 2) return;
             var top = new List<Vector3>(); var topUV = new List<Vector2>();
             var curb = new List<Vector3>(); var curbUV = new List<Vector2>();
-            float x = 1;
-            var previous = P(refs[0]);
+            var origin = P(refs[0]);
             for (int i = 0; i + 1 < refs.Count; i += 2) {
                 var outer = P(refs[i + 1]);
                 var inner = P(refs[i]);
                 var raised = Up(inner, SidewalkHeight);
-                x -= inner.DistanceTo(previous);
-                previous = inner;
-                var t0 = new Vector2(x, 0);
-                var t1 = new Vector2(x, 1);
+                var t0 = GroundUV(raised, origin);
                 top.Add(raised); topUV.Add(t0);
-                top.Add(outer); topUV.Add(t1);
+                top.Add(outer); topUV.Add(GroundUV(outer, origin));
                 curb.Add(inner); curbUV.Add(t0);
                 curb.Add(raised); curbUV.Add(t0);
             }
@@ -507,9 +508,15 @@ namespace PsdlViewer.Render {
             for (int i = 0; i < refs.Count; i++) {
                 p[i] = P(refs[i]);
                 if (height != null) p[i].Y = height.Value;
-                uv[i] = new Vector2((p[0].X - p[i].X) / 10f, (p[0].Z - p[i].Z) / 10f);
+                uv[i] = GroundUV(p[i], p[0]);
             }
             Fan(p, uv, Tex(texture), ColorFor(texture));
+        }
+
+        /// <summary>World space mapping of the ground surfaces, anchored on the texture cell of the origin (the game's mapping).</summary>
+        static Vector2 GroundUV(Vector3 p, Vector3 origin) {
+            float s = Mathf.Floor(-origin.X * GroundScale), t = Mathf.Floor(origin.Z * GroundScale);
+            return new Vector2(-p.X * GroundScale - s, 1 - (p.Z * GroundScale - t));
         }
 
         // ---- Shape_Facade ----
@@ -527,6 +534,11 @@ namespace PsdlViewer.Render {
             Strip(new[] { p0, p1, p2, p3 }, new[] { new Vector2(0, 0), new Vector2(u, 0), new Vector2(0, v), new Vector2(u, v) }, Tex(texture), ColorFor(texture));
         }
 
+        /// <summary>
+        /// The texture scale is in repeats per metre: the repeats across the facade are rounded to a whole number, the vertical
+        /// mapping keeps the scale, so it follows the slanted bottom edge. A bottom vertex above the top edge clips the sliver to a
+        /// triangle; with both above it, the sliver is underground and not drawn.
+        /// </summary>
         void Sliver(SliverAttribute s, int texture) {
             float top = psdl.HeightAt(s.TopHeight);
             float scale = psdl.HeightAt(s.TextureScale);
@@ -534,11 +546,391 @@ namespace PsdlViewer.Render {
             var p1 = P(s.Vertices[1]);
             var p2 = new Vector3(p0.X, top, p0.Z);
             var p3 = new Vector3(p1.X, top, p1.Z);
-            float width = p0.DistanceTo(p1);
-            float rightHeight = p1.DistanceTo(p3);
-            float u = (int)(width * scale + 0.5f);
-            float v = width > 1e-6f ? (int)(rightHeight / width * u + 0.5f) : 1;
-            Strip(new[] { p0, p1, p2, p3 }, new[] { new Vector2(0, 0), new Vector2(u, 0), new Vector2(0, v), new Vector2(u, v) }, Tex(texture), ColorFor(texture));
+            bool leftClipped = p0.Y >= top, rightClipped = p1.Y >= top;
+            if (leftClipped && rightClipped) return;
+            float u = Mathf.Floor(FlatDistance(p0, p1) * scale + 0.5f);
+            var uv0 = new Vector2(0, 1 - (top - p0.Y) * scale);
+            var uv1 = new Vector2(u, 1 - (top - p1.Y) * scale);
+            var uv2 = new Vector2(0, 1);
+            var uv3 = new Vector2(u, 1);
+            var tex = Tex(texture);
+            var color = ColorFor(texture);
+            if (rightClipped) Tri(p0, p3, p2, uv0, uv3, uv2, tex, color);
+            else if (!leftClipped) Tri(p0, p1, p2, uv0, uv1, uv2, tex, color);
+            if (!rightClipped) Tri(p2, p1, p3, uv2, uv1, uv3, tex, color);
+        }
+
+        // ---- tunnels and railings ----
+        //
+        // The tunnel meshes are defined mirrored (x negated), with clockwise front faces and v = 0 at the top of the picture. The code
+        // below works on unmirrored positions (so its cross products are in the opposite order), takes the triangles and UVs in
+        // that order and lets MTri convert the winding and v.
+
+        readonly struct TV {
+            public readonly Vector3 P;
+            public readonly Vector2 UV;
+
+            public TV(Vector3 p, Vector2 uv) {
+                P = p;
+                UV = uv;
+            }
+        }
+
+        readonly struct Surface {
+            public readonly TextureEntry Texture;
+            public readonly Color Color;
+
+            public Surface(TextureEntry texture, Color color) {
+                Texture = texture;
+                Color = color;
+            }
+        }
+
+        Surface SurfaceFor(int texture) => new(Tex(texture), ColorFor(texture));
+
+        /// <summary>Texture n + k of a tunnel, falling back to n.</summary>
+        int TunnelTexture(int texture, int k) {
+            int t = Derived(texture, k);
+            return t >= 0 ? t : texture;
+        }
+
+        void MTri(TV a, TV b, TV c, Surface s) => Tri(a.P, c.P, b.P, FlipV(a.UV), FlipV(c.UV), FlipV(b.UV), s.Texture, s.Color);
+
+        void MQuad(TV a, TV b, TV c, TV d, Surface s) {
+            MTri(a, b, c, s);
+            MTri(a, c, d, s);
+        }
+
+        static Vector2 FlipV(Vector2 uv) => new(uv.X, 1 - uv.Y);
+
+        static float FlatDistance(Vector3 a, Vector3 b) => new Vector2(a.X - b.X, a.Z - b.Z).Length();
+
+        static Vector3 FlatDirection(Vector3 from, Vector3 to) {
+            var d = new Vector3(to.X - from.X, 0, to.Z - from.Z);
+            return d.LengthSquared() > 1e-12f ? d.Normalized() : Vector3.Zero;
+        }
+
+        /// <summary>Horizontal unit vector to the right of the edge from a to b: the outside of a counter-clockwise perimeter.</summary>
+        static Vector3 Outward(Vector3 a, Vector3 b) {
+            var d = Vector3.Up.Cross(a - b);
+            return d.LengthSquared() > 1e-12f ? d.Normalized() : Vector3.Zero;
+        }
+
+        /// <summary>Offset that chamfers the end of a wall (the "offset" flags).</summary>
+        static Vector3 Mitre(Vector3 side, float thickness, bool start, bool left) {
+            float sign = (start ? 1 : -1) * (left ? 1 : -1);
+            return side.Cross(Vector3.Up) * (thickness * 1.414f * sign);
+        }
+
+        /// <summary>World space mapping anchored exactly on the origin (tunnel undersides and ceilings).</summary>
+        static Vector2 AnchoredUV(Vector3 p, Vector3 origin) => new((origin.X - p.X) * GroundScale, (p.Z - origin.Z) * GroundScale);
+
+        /// <summary>u along an edge in units of the given length, row by row.</summary>
+        static float[] AlongU(Vector3[] edge, float unit) {
+            var u = new float[edge.Length];
+            for (int i = 1; i < edge.Length; i++) u[i] = u[i - 1] + (unit > 1e-6f ? edge[i - 1].DistanceTo(edge[i]) / unit : 0);
+            return u;
+        }
+
+        /// <summary>u along the left edge in units of the width of each row.</summary>
+        static float[] AcrossU(Vector3[] left, Vector3[] right) {
+            var u = new float[left.Length];
+            for (int i = 1; i < left.Length; i++) {
+                float width = FlatDistance(left[i - 1], right[i - 1]);
+                u[i] = u[i - 1] + (width > 1e-6f ? left[i - 1].DistanceTo(left[i]) / width : 0);
+            }
+            return u;
+        }
+
+        /// <summary>The road a road tunnel follows: the first road attribute among the next two (texture references aside).</summary>
+        static (List<int> Refs, int PerSection) TunnelRoad(Room room, int tunnelIndex) {
+            int seen = 0;
+            for (int i = tunnelIndex + 1; i < room.Attributes.Count && seen < 2; i++) {
+                switch (room.Attributes[i]) {
+                    case TextureReferenceAttribute:
+                        continue;
+                    case DividedRoadAttribute d:
+                        return (d.Vertices, 6);
+                    case StripAttribute s when s.Type == AttributeType.RoadWithSidewalks:
+                        return (s.Vertices, 4);
+                    case StripAttribute s when s.Type == AttributeType.RoadWithoutSidewalks:
+                        return (s.Vertices, 2);
+                }
+                seen++;
+            }
+            return (null, 0);
+        }
+
+        void Tunnel(Room room, int index, TunnelAttribute t, int texture) {
+            if (t.Junction) {
+                JunctionTunnel(room, t, texture);
+                return;
+            }
+            var (refs, perSection) = TunnelRoad(room, index);
+            if (refs == null) {
+                // the game needs a road right after a road tunnel
+                NotRendered(t);
+                return;
+            }
+            RoadTunnel(t, refs, perSection, texture);
+        }
+
+        /// <summary>
+        /// Junction tunnel: walls on the perimeter edges selected by the visibility bits; with the wall style also their outer faces,
+        /// the underside (a third of the height below the highest perimeter point) and, if enabled, a flat ceiling.
+        /// Textures: n inner walls, n + 4 outer walls, n + 5 underside, n + 2 ceiling.
+        /// </summary>
+        void JunctionTunnel(Room room, TunnelAttribute t, int texture) {
+            int n = room.Perimeter.Count;
+            uint walls = t.WallVisibility;
+            float h = t.Height;
+            if (n < 3 || walls == 0 || h <= 1e-6f) return;
+            var p = new Vector3[n];
+            float maxY = float.MinValue;
+            for (int i = 0; i < n; i++) {
+                p[i] = P(room.Perimeter[i].Vertex);
+                maxY = Math.Max(maxY, p[i].Y);
+            }
+            bool isWall = t.GetFlag(TunnelAttribute.StyleWall);
+            bool doubleSided = t.GetFlag(TunnelAttribute.Culled) && !isWall;
+            float thick = h / 3;
+            var up = new Vector3(0, h, 0);
+            var third = new Vector3(0, thick, 0);
+            var inner = SurfaceFor(TunnelTexture(texture, 0));
+            var outer = SurfaceFor(TunnelTexture(texture, 4));
+
+            for (int i = 0; i < n; i++) {
+                if (!TunnelAttribute.HasWall(walls, i, n)) continue;
+                var l = p[i];
+                var r = p[(i + 1) % n];
+                float uEnd = Math.Max(1, FlatDistance(l, r) / h);
+                var bl = new TV(l, new Vector2(0, 1));
+                var br = new TV(r, new Vector2(uEnd, 1));
+                var tr = new TV(r + up, new Vector2(uEnd, 0));
+                var tl = new TV(l + up, new Vector2(0, 0));
+                MQuad(bl, br, tr, tl, inner);
+                if (doubleSided) {
+                    MTri(tr, br, bl, inner);
+                    MTri(tl, tr, bl, inner);
+                }
+                if (!isWall) continue;
+                var outward = Outward(l, r);
+                var a = TunnelAttribute.HasWall(t.WallDirectionA, i, n) ? -outward : outward;
+                var b = TunnelAttribute.HasWall(t.WallDirectionB, i, n) ? -outward : outward;
+                var outerTopLeft = new TV(l + a * thick + up, new Vector2(0, 0));
+                var outerTopRight = new TV(r + b * thick + up, new Vector2(uEnd, 0));
+                MQuad(new TV(r + b * thick - third, new Vector2(uEnd, 1)), new TV(l + a * thick - third, new Vector2(0, 1)), outerTopLeft, outerTopRight, outer);
+                MQuad(outerTopRight, outerTopLeft, new TV(l + up, new Vector2(0, 1)), new TV(r + up, new Vector2(uEnd, 1)), outer);
+            }
+
+            int origin = t.CeilingFanOrigin;
+            if (isWall) {
+                var under = SurfaceFor(TunnelTexture(texture, 5));
+                var fan = new TV[n];
+                for (int i = 0; i < n; i++) {
+                    int k = (i + origin) % n, next = (i + origin + 1) % n;
+                    var v = new Vector3(p[k].X, maxY, p[k].Z);
+                    var pos = v - third;
+                    // where an adjoining edge has a wall, the underside reaches out to its outer face
+                    if (TunnelAttribute.HasWall(walls, k, n) || TunnelAttribute.HasWall(walls, next, n)) pos += Outward(v, new Vector3(p[next].X, maxY, p[next].Z)) * thick;
+                    fan[i] = new TV(pos, AnchoredUV(v, p[0]));
+                }
+                for (int i = 2; i < n; i++) MTri(fan[0], fan[i - 1], fan[i], under);
+            }
+            if (t.GetFlag(TunnelAttribute.FlatCeiling)) {
+                var ceiling = SurfaceFor(TunnelTexture(texture, 2));
+                var fan = new TV[n];
+                for (int i = 0; i < n; i++) {
+                    var v = p[(i + origin) % n];
+                    fan[i] = new TV(new Vector3(v.X, maxY + h, v.Z), AnchoredUV(v, p[0]));
+                }
+                for (int i = 2; i < n; i++) MTri(fan[i - 1], fan[i], fan[0], ceiling);
+            }
+        }
+
+        /// <summary>
+        /// Road tunnel: walls or railings along the outer edges of the following road, optionally curved, with (wall style) their
+        /// outer faces, end caps and the underside, and a flat or curved ceiling. Textures: n left wall, n + 1 right wall,
+        /// n + 2 ceiling, n + 3 right outer wall, n + 4 left outer wall, n + 5 underside.
+        /// </summary>
+        void RoadTunnel(TunnelAttribute t, List<int> refs, int perSection, int texture) {
+            int rows = refs.Count / perSection;
+            float h = t.Height;
+            bool leftSide = t.GetFlag(TunnelAttribute.LeftSide), rightSide = t.GetFlag(TunnelAttribute.RightSide);
+            if (rows < 2 || h <= 1e-6f || !leftSide && !rightSide) return;
+            bool isWall = t.GetFlag(TunnelAttribute.StyleWall);
+            bool flatCeiling = t.GetFlag(TunnelAttribute.FlatCeiling);
+            bool curvedCeiling = !flatCeiling && t.GetFlag(TunnelAttribute.CurvedCeiling);
+            bool curvedSides = t.GetFlag(TunnelAttribute.CurvedSides);
+            bool doubleSided = t.GetFlag(TunnelAttribute.Culled) && !isWall;
+            bool leftOuter = isWall && leftSide, rightOuter = isWall && rightSide;
+            bool closedStartLeft = t.GetFlag(TunnelAttribute.ClosedStartLeft), closedEndLeft = t.GetFlag(TunnelAttribute.ClosedEndLeft);
+            bool closedStartRight = t.GetFlag(TunnelAttribute.ClosedStartRight), closedEndRight = t.GetFlag(TunnelAttribute.ClosedEndRight);
+            float thick = h / 3;
+            var up = new Vector3(0, h, 0);
+            var third = new Vector3(0, thick, 0);
+
+            var left = new Vector3[rows];
+            var right = new Vector3[rows];
+            var leftSideDir = new Vector3[rows];
+            var rightSideDir = new Vector3[rows];
+            for (int i = 0; i < rows; i++) {
+                int b = i * perSection;
+                left[i] = P(refs[b]);
+                right[i] = P(refs[b + perSection - 1]);
+                leftSideDir[i] = -FlatDirection(left[i], P(refs[b + 1]));
+                rightSideDir[i] = -FlatDirection(right[i], P(refs[b + perSection - 2]));
+            }
+            float[] uLeft = AlongU(left, h), uRight = AlongU(right, h);
+            float[] uLeftThick = AlongU(left, thick), uRightThick = AlongU(right, thick);
+            float[] uAcross = AcrossU(left, right);
+
+            var wallLeft = new TV[rows][];
+            var wallRight = new TV[rows][];
+            var outerLeft = new TV[rows][];
+            var outerRight = new TV[rows][];
+            var under = new TV[rows][];
+            var ceiling = new TV[rows][];
+            for (int i = 0; i < rows; i++) {
+                // the left closing flags also flatten the curved walls and ceiling of the first/last row
+                bool curve = !(i == 0 && closedStartLeft || i == rows - 1 && closedEndLeft);
+                var leftBottomUV = new Vector2(uLeft[i], 1);
+                var leftTopUV = new Vector2(uLeft[i], 0);
+                var rightBottomUV = new Vector2(uRight[i], 1);
+                var rightTopUV = new Vector2(uRight[i], 0);
+                if (leftSide) wallLeft[i] = WallRow(left[i], leftSideDir[i], leftBottomUV, leftTopUV, curvedSides && curve, curvedSides, thick, up);
+                if (rightSide) wallRight[i] = WallRow(right[i], rightSideDir[i], rightBottomUV, rightTopUV, curvedSides && curve, curvedSides, thick, up);
+                if (isWall) {
+                    var leftOffset = Vector3.Zero;
+                    if (i == 0 && t.GetFlag(TunnelAttribute.OffsetStartLeft)) leftOffset = Mitre(leftSideDir[i], thick, true, true);
+                    else if (i == rows - 1 && t.GetFlag(TunnelAttribute.OffsetEndLeft)) leftOffset = Mitre(leftSideDir[i], thick, false, true);
+                    var rightOffset = Vector3.Zero;
+                    if (i == 0 && t.GetFlag(TunnelAttribute.OffsetStartRight)) rightOffset = Mitre(rightSideDir[i], thick, true, false);
+                    else if (i == rows - 1 && t.GetFlag(TunnelAttribute.OffsetEndRight)) rightOffset = Mitre(rightSideDir[i], thick, false, false);
+                    // without a wall on a side the underside stops at the road edge
+                    var leftBottom = leftOuter ? left[i] + leftSideDir[i] * thick + leftOffset - third : left[i] - third;
+                    var rightBottom = rightOuter ? right[i] + rightSideDir[i] * thick + rightOffset - third : right[i] - third;
+                    if (leftOuter) {
+                        var top = left[i] + up + leftSideDir[i] * thick + leftOffset;
+                        outerLeft[i] = new[] { new TV(leftBottom, leftBottomUV), new TV(top, leftTopUV), new TV(top, new Vector2(uLeftThick[i], 1)), new TV(left[i] + up, new Vector2(uLeftThick[i], 0)) };
+                    }
+                    if (rightOuter) {
+                        var top = right[i] + up + rightSideDir[i] * thick + rightOffset;
+                        outerRight[i] = new[] { new TV(rightBottom, rightBottomUV), new TV(top, rightTopUV), new TV(top, new Vector2(uRightThick[i], 1)), new TV(right[i] + up, new Vector2(uRightThick[i], 0)) };
+                    }
+                    under[i] = new[] { new TV(rightBottom, new Vector2(uAcross[i], 1)), new TV(leftBottom, new Vector2(uAcross[i], 0)) };
+                }
+                if (flatCeiling) {
+                    ceiling[i] = new[] { new TV(left[i] + up, new Vector2(uAcross[i], 0)), new TV(right[i] + up, new Vector2(uAcross[i], 1)) };
+                } else if (curvedCeiling) {
+                    var l = left[i] + up;
+                    var r = right[i] + up;
+                    var center = (l + r) / 2;
+                    var leftMiddle = (l + center) / 2;
+                    var rightMiddle = (r + center) / 2;
+                    if (curve) {
+                        leftMiddle.Y += 1.5f;
+                        rightMiddle.Y += 1.5f;
+                        center.Y += 2;
+                    }
+                    float u = uAcross[i];
+                    ceiling[i] = new[] {
+                        new TV(l, new Vector2(u, 0)), new TV(leftMiddle, new Vector2(u, 0.25f)), new TV(center, new Vector2(u, 0.5f)),
+                        new TV(rightMiddle, new Vector2(u, 0.75f)), new TV(r, new Vector2(u, 1))
+                    };
+                }
+            }
+
+            var leftWall = SurfaceFor(TunnelTexture(texture, 0));
+            var rightWall = SurfaceFor(TunnelTexture(texture, 1));
+            var ceilingSurface = SurfaceFor(TunnelTexture(texture, 2));
+            var rightOuterSurface = SurfaceFor(TunnelTexture(texture, 3));
+            var leftOuterSurface = SurfaceFor(TunnelTexture(texture, 4));
+            var underSurface = SurfaceFor(TunnelTexture(texture, 5));
+            for (int i = 0; i + 1 < rows; i++) {
+                if (leftSide) {
+                    WallSpan(wallLeft[i], wallLeft[i + 1], true, leftWall);
+                    if (doubleSided) WallSpan(Reversed(wallLeft[i]), Reversed(wallLeft[i + 1]), true, leftWall);
+                }
+                if (rightSide) {
+                    WallSpan(wallRight[i], wallRight[i + 1], false, rightWall);
+                    if (doubleSided) WallSpan(Reversed(wallRight[i]), Reversed(wallRight[i + 1]), false, rightWall);
+                }
+                if (leftOuter) {
+                    TV[] a = outerLeft[i], c = outerLeft[i + 1];
+                    MTri(a[0], c[0], a[1], leftOuterSurface);
+                    MTri(a[1], c[0], c[1], leftOuterSurface);
+                    MTri(a[2], c[2], a[3], leftOuterSurface);
+                    MTri(a[3], c[2], c[3], leftOuterSurface);
+                }
+                if (rightOuter) {
+                    TV[] a = outerRight[i], c = outerRight[i + 1];
+                    MTri(a[1], c[0], a[0], rightOuterSurface);
+                    MTri(c[1], c[0], a[1], rightOuterSurface);
+                    MTri(a[3], c[2], a[2], rightOuterSurface);
+                    MTri(c[3], c[2], a[3], rightOuterSurface);
+                }
+                if (isWall) {
+                    TV[] a = under[i], c = under[i + 1];
+                    MTri(a[0], c[0], a[1], underSurface);
+                    MTri(a[1], c[0], c[1], underSurface);
+                }
+                if (ceiling[i] != null) {
+                    for (int j = 0; j + 1 < ceiling[i].Length; j++) {
+                        TV a = ceiling[i][j], b = ceiling[i][j + 1], c = ceiling[i + 1][j], d = ceiling[i + 1][j + 1];
+                        MTri(a, b, c, ceilingSurface);
+                        MTri(b, d, c, ceilingSurface);
+                    }
+                }
+            }
+
+            int last = (rows - 1) * perSection;
+            if (leftOuter && closedStartLeft) TunnelCap(refs[0], refs[1], true, true, t.GetFlag(TunnelAttribute.OffsetStartLeft), thick, up, third, leftOuterSurface);
+            if (leftOuter && closedEndLeft) TunnelCap(refs[last], refs[last + 1], false, true, t.GetFlag(TunnelAttribute.OffsetEndLeft), thick, up, third, leftOuterSurface);
+            if (rightOuter && closedStartRight) TunnelCap(refs[perSection - 1], refs[perSection - 2], true, false, t.GetFlag(TunnelAttribute.OffsetStartRight), thick, up, third, rightOuterSurface);
+            if (rightOuter && closedEndRight) TunnelCap(refs[last + perSection - 1], refs[last + perSection - 2], false, false, t.GetFlag(TunnelAttribute.OffsetEndRight), thick, up, third, rightOuterSurface);
+        }
+
+        /// <summary>The vertices of one row of a tunnel wall, bottom to top; curved walls bulge outwards by the wall thickness.</summary>
+        static TV[] WallRow(Vector3 bottom, Vector3 side, Vector2 bottomUV, Vector2 topUV, bool bulge, bool curved, float thick, Vector3 up) {
+            if (!curved) return new[] { new TV(bottom, bottomUV), new TV(bottom + up, topUV) };
+            var b = bulge ? bottom + side * thick : bottom;
+            return new[] {
+                new TV(bottom, bottomUV), new TV(b + up * 0.25f, bottomUV.Lerp(topUV, 0.25f)),
+                new TV(b + up * 0.75f, bottomUV.Lerp(topUV, 0.75f)), new TV(bottom + up, topUV)
+            };
+        }
+
+        static TV[] Reversed(TV[] row) {
+            var copy = (TV[])row.Clone();
+            Array.Reverse(copy);
+            return copy;
+        }
+
+        void WallSpan(TV[] row, TV[] next, bool left, Surface s) {
+            for (int j = 0; j + 1 < row.Length; j++) {
+                TV a = row[j], b = row[j + 1], c = next[j], d = next[j + 1];
+                if (left) {
+                    MTri(b, c, a, s);
+                    MTri(d, c, b, s);
+                } else {
+                    MTri(a, c, b, s);
+                    MTri(b, c, d, s);
+                }
+            }
+        }
+
+        /// <summary>Closes the end of a wall between its inner face (on the road edge) and its outer face.</summary>
+        void TunnelCap(int innerRef, int otherRef, bool start, bool left, bool mitre, float thick, Vector3 up, Vector3 third, Surface s) {
+            var inner = P(innerRef);
+            var side = -FlatDirection(inner, P(otherRef));
+            var offset = mitre ? Mitre(side, thick, start, left) : Vector3.Zero;
+            var o = new TV(inner + side * thick + offset - third, new Vector2(0, 0));
+            var i = new TV(inner, new Vector2(1, 0));
+            var it = new TV(inner + up, new Vector2(1, 1));
+            var ot = new TV(inner + up + side * thick + offset, new Vector2(0, 1));
+            if (start != left) MQuad(o, i, it, ot, s);
+            else MQuad(i, o, ot, it, s);
         }
     }
 }

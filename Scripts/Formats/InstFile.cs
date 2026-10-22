@@ -5,9 +5,18 @@ using System.Numerics;
 
 namespace PsdlViewer.Formats {
     public abstract class InstComponent {
+        /// <summary>Flags in the high byte of the modifiers; bits 3, 4, 6 and 7 are unknown.</summary>
+        public const int FlagLandmark = 0x100, FlagBanger = 0x200, FlagNoWheelCollision = 0x400, FlagMultiRoom = 0x2000;
+        public static readonly (int Flag, string Name, string Description)[] Flags = {
+            (FlagLandmark, "Landmark", "Landmark: no backface culling, has a bound"),
+            (FlagBanger, "Banger", "The object is a banger (breakable prop)"),
+            (FlagNoWheelCollision, "No wheel collision", "Simple collision without wheel contact, only together with the landmark flag"),
+            (FlagMultiRoom, "Multiroom", "Spans several rooms, has a bound")
+        };
+
         /// <summary>Index of the room the object is placed in (stored +1 in the file).</summary>
         public int Room;
-        /// <summary>Paint job in the low bits, other bits unknown.</summary>
+        /// <summary>Paint job (variant) in the low byte, flags in the high byte.</summary>
         public int Modifiers;
         public string Pkg = "";
 
@@ -15,7 +24,7 @@ namespace PsdlViewer.Formats {
         public abstract Vector3 Origin { get; set; }
         /// <summary>Columns of the object to world matrix (x, y and z axis).</summary>
         public abstract (Vector3 x, Vector3 y, Vector3 z) Axes { get; }
-        public int PaintJob => Modifiers & 0x7f;
+        public int PaintJob => Modifiers & 0xff;
 
         public InstComponent Clone() => (InstComponent)MemberwiseClone();
         public override string ToString() => Pkg;

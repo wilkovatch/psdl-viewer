@@ -298,7 +298,7 @@ namespace PsdlViewer.Render {
                     }
                     break;
                 default:
-                    float spacing = path.Spacing;
+                    float spacing = path.RawSpacing == 0 ? PropPath.DefaultSpacing : path.Spacing;
                     for (int i = 0; i + 1 < pts.Count; i++) {
                         var a = pts[i].Position.ToGodot();
                         var b = pts[i + 1].Position.ToGodot();
@@ -408,7 +408,7 @@ namespace PsdlViewer.Render {
                     Axis(route.XOrientation, Colors.Red);
                     Axis(route.YOrientation, Colors.Lime);
                     Axis(route.ZOrientation, Colors.Blue);
-                    Axis(route.WOrientation, Colors.Magenta);
+                    Axis(route.Tangents, Colors.Magenta);
                 }
             }
             routeMarkers.Mesh = pos.Count > 0 ? Lines(pos, col, true) : null;

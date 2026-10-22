@@ -11,7 +11,8 @@ namespace PsdlViewer.Formats.Psdl {
         public const int RoadWithoutSidewalks = 0x2;
         public const int Sliver = 0x3;
         public const int CrosswalkRectangle = 0x4;
-        public const int RoadTriangleFan = 0x5;
+        /// <summary>Triangle fan that the game skips when its first vertex is above the camera (formerly "road triangle fan").</summary>
+        public const int CulledTriangleFan = 0x5;
         public const int TriangleFan = 0x6;
         public const int FacadeBound = 0x7;
         public const int DividedRoad = 0x8;
@@ -27,7 +28,7 @@ namespace PsdlViewer.Formats.Psdl {
                 case RoadWithoutSidewalks: return "Road without sidewalks";
                 case Sliver: return "Sliver";
                 case CrosswalkRectangle: return "Crosswalk rectangle";
-                case RoadTriangleFan: return "Road triangle fan";
+                case CulledTriangleFan: return "Culled triangle fan";
                 case TriangleFan: return "Triangle fan";
                 case FacadeBound: return "Facade bound";
                 case DividedRoad: return "Divided road";
@@ -95,7 +96,7 @@ namespace PsdlViewer.Formats.Psdl {
                 case AttributeType.RoadWithoutSidewalks: a = new StripAttribute(type, 2); break;
                 case AttributeType.Sliver: a = subtype == 4 ? new SliverAttribute() : null; break;
                 case AttributeType.CrosswalkRectangle: a = new CrosswalkRectangleAttribute(); break;
-                case AttributeType.RoadTriangleFan: a = new FanAttribute(type); break;
+                case AttributeType.CulledTriangleFan: a = new FanAttribute(type); break;
                 case AttributeType.TriangleFan: a = new FanAttribute(type); break;
                 case AttributeType.FacadeBound: a = subtype == 4 ? new FacadeBoundAttribute() : null; break;
                 case AttributeType.DividedRoad: a = new DividedRoadAttribute(); break;
@@ -123,13 +124,13 @@ namespace PsdlViewer.Formats.Psdl {
             Add(0x08, 0x0f, "Sidewalk strip (2 vertices per cross section)");
             Add(0x10, 0x17, "Road without sidewalks (2 vertices per cross section)");
             Add(0x1c, 0x1c, "Sliver");
-            Add(0x24, 0x24, "Crosswalk rectangle");
-            Add(0x28, 0x2f, "Road triangle fan");
+            Add(0x24, 0x24, "Crosswalk rectangle (uses texture n + 2)");
+            Add(0x28, 0x2f, "Culled triangle fan (not drawn when its first vertex is above the camera)");
             Add(0x30, 0x37, "Triangle fan");
-            Add(0x3c, 0x3c, "Facade bound");
+            Add(0x3c, 0x3c, "Facade bound (collision only, never drawn)");
             Add(0x40, 0x47, "Divided road (6 vertices per cross section)");
-            Add(0x48, 0x48, "Junction tunnel/railing");
-            Add(0x49, 0x4f, "Road tunnel/railing (0x4b is the common one)");
+            Add(0x48, 0x48, "Tunnel/railing with a size word: 9 or 10 words = junction, 2 or 3 = road");
+            Add(0x4a, 0x4b, "Road tunnel/railing (0x4b is the common one, 0x4a is a beta variant)");
             Add(0x50, 0x57, "Texture reference (index = data + 256 * subtype - 1)");
             Add(0x5e, 0x5e, "Facade");
             Add(0x60, 0x67, "Roof triangle fan");
@@ -223,6 +224,7 @@ namespace PsdlViewer.Formats.Psdl {
 
     public class DividedRoadAttribute : CountedAttribute {
         public const int DividerInvisible = 0, DividerFlat = 1, DividerElevated = 2, DividerWedged = 3;
+        /// <summary>Bits 2-5 are never set in the original cities and their meaning is unknown.</summary>
         public const int FlagUnknown0 = 4, FlagUnknown1 = 8, FlagUnknown2 = 16, FlagUnknown3 = 32, FlagCloseStart = 64, FlagCloseEnd = 128;
         public static readonly string[] DividerNames = { "Invisible", "Flat", "Elevated", "Wedged" };
 
@@ -230,7 +232,7 @@ namespace PsdlViewer.Formats.Psdl {
         public int FlagsByte;
         /// <summary>Index in the texture list (stored in the file as index + 1).</summary>
         public int DividerTexture = -1;
-        /// <summary>Raw divider value in units of 1/256; texture repeat for flat dividers, height for elevated ones.</summary>
+        /// <summary>Raw divider value in units of 1/256; texture repeat for flat dividers, height for elevated and wedged ones.</summary>
         public int Value;
 
         public override int Type => AttributeType.DividedRoad;
@@ -278,7 +280,7 @@ namespace PsdlViewer.Formats.Psdl {
         public override string Describe() => $"{Name} ({Sections} cross sections, {DividerNames[DividerType]})";
     }
 
-    /// <summary>Triangle fan (0x30) and road triangle fan (0x28). The count is the number of triangles.</summary>
+    /// <summary>Triangle fan (0x30) and culled triangle fan (0x28). The count is the number of triangles.</summary>
     public class FanAttribute : CountedAttribute {
         readonly int type;
 
@@ -388,6 +390,7 @@ namespace PsdlViewer.Formats.Psdl {
 
     public class SliverAttribute : TwoVertexAttribute {
         public int TopHeight;
+        /// <summary>Index in the height list of the texture repeats per metre.</summary>
         public int TextureScale;
 
         public override int Type => AttributeType.Sliver;
@@ -415,9 +418,19 @@ namespace PsdlViewer.Formats.Psdl {
     }
 
     public class FacadeBoundAttribute : TwoVertexAttribute {
-        /// <summary>Angle between the facade and the sunlight (0-255).</summary>
+        public const float SunAngleStep = 5.625f;
+
+        /// <summary>Sun angle index (0-63, steps of 5.625 degrees) derived from the direction of the facade.</summary>
         public int Angle;
         public int TopHeight;
+
+        public float AngleDegrees => Angle * SunAngleStep;
+
+        /// <summary>The sun angle index the original cities use for a facade from a to b.</summary>
+        public static int SunAngle(System.Numerics.Vector3 a, System.Numerics.Vector3 b) {
+            double degrees = Math.Atan2(b.Z - a.Z, b.X - a.X) * (180 / Math.PI) + 180;
+            return Math.Min(63, (int)(degrees % 360 / SunAngleStep));
+        }
 
         public override int Type => AttributeType.FacadeBound;
         public override int Subtype => 4;
@@ -503,7 +516,9 @@ namespace PsdlViewer.Formats.Psdl {
     }
 
     /// <summary>
-    /// Road tunnel/railing (subtype = number of data words) or junction tunnel/railing (subtype 0, an explicit size word follows the id).
+    /// Tunnel/railing. The subtype is the number of data words, or 0 when an explicit size word follows the id. The size tells the
+    /// variant apart: 3 words = road tunnel (flags, height, unknown), 10 = junction tunnel (plus the ceiling origin and three bit
+    /// arrays); 2 and 9 are beta variants without the unknown word.
     /// </summary>
     public class TunnelAttribute : RoomAttribute {
         /// <summary>Flag bits. StyleWall is the "style" bit: railing when clear, wall when set.</summary>
@@ -512,18 +527,23 @@ namespace PsdlViewer.Formats.Psdl {
         public const int CurvedCeiling = 256, OffsetStartLeft = 512, OffsetEndLeft = 1024, OffsetStartRight = 2048, OffsetEndRight = 4096;
         public const int CurvedSides = 8192, Culled = 16384, Unknown = 32768;
 
-        public bool Junction;
-        /// <summary>Data words after the id (and after the size word for junctions).</summary>
+        /// <summary>True when the size is stored in a word after the id (subtype 0), always the case for junctions.</summary>
+        public bool ExplicitSize;
+        /// <summary>Data words after the id (and after the size word).</summary>
         public List<int> Words = new() { 0, 0, 0 };
 
         public override int Type => AttributeType.Tunnel;
-        public override int Subtype => Junction ? 0 : Math.Clamp(Words.Count, 1, 7);
-        public override int BodyWords => (Junction ? 1 : 0) + Words.Count;
+        public override int Subtype => ExplicitSize ? 0 : Math.Clamp(Words.Count, 1, 7);
+        public override int BodyWords => (ExplicitSize ? 1 : 0) + Words.Count;
         public override string Name => Junction ? "Junction tunnel/railing" : "Road tunnel/railing";
+        /// <summary>Junction tunnels follow the room perimeter, road tunnels the road attribute that comes after them.</summary>
+        public bool Junction => Words.Count >= 9;
+        /// <summary>False for the beta variants (2 and 9 words), which lack the unknown word after the height.</summary>
+        public bool HasUnknownValue => Words.Count >= 3 && Words.Count != 9;
 
         protected override void Initialize(int subtype) {
-            Junction = subtype == 0;
-            if (Junction) Words = new List<int>(new int[10]);
+            ExplicitSize = subtype == 0;
+            if (ExplicitSize) Words = new List<int>(new int[10]);
             else Words = new List<int>(new int[Math.Max(subtype, 1)]);
         }
 
@@ -544,10 +564,18 @@ namespace PsdlViewer.Formats.Psdl {
         /// <summary>Height in metres * 256.</summary>
         public int RawHeight { get => Word(1); set => SetWord(1, value); }
         public float Height { get => RawHeight / 256f; set => RawHeight = Math.Clamp((int)(value * 256f + 0.5f), 0, 0xffff); }
-        /// <summary>Second unknown value (missing in subtype 2 road tunnels).</summary>
-        public int UnknownValue { get => Word(2); set => SetWord(2, value); }
-        /// <summary>Junction only: perimeter index where the ceiling fan starts.</summary>
-        public int CeilingFanOrigin { get => Word(3); set => SetWord(3, value); }
+        /// <summary>Value after the height, apparently unused by the game (missing in the beta variants).</summary>
+        public int UnknownValue {
+            get => HasUnknownValue ? Word(2) : 0;
+            set {
+                if (HasUnknownValue) SetWord(2, value);
+            }
+        }
+
+        /// <summary>First word of the junction data.</summary>
+        int JunctionBase => Words.Count == 9 ? 2 : 3;
+        /// <summary>Junction only: perimeter index where the ceiling (and underside) fan starts.</summary>
+        public int CeilingFanOrigin { get => Word(JunctionBase); set => SetWord(JunctionBase, value); }
 
         uint Long(int firstWord) => (uint)(Word(firstWord) | (Word(firstWord + 1) << 16));
 
@@ -556,15 +584,30 @@ namespace PsdlViewer.Formats.Psdl {
             SetWord(firstWord + 1, (int)(value >> 16));
         }
 
-        public uint WallVisibility { get => Long(4); set => SetLong(4, value); }
-        public uint WallDirectionA { get => Long(6); set => SetLong(6, value); }
-        public uint WallDirectionB { get => Long(8); set => SetLong(8, value); }
+        /// <summary>
+        /// Junction only: one bit per perimeter edge, set when a wall is generated on it. Bit i + 1 is the edge from perimeter point i
+        /// to point i + 1, bit 0 the edge from the last point back to point 0.
+        /// </summary>
+        public uint WallVisibility { get => Long(JunctionBase + 1); set => SetLong(JunctionBase + 1, value); }
+        /// <summary>Junction only: per edge (same bits as the visibility), flips the outward offset of the wall's first end.</summary>
+        public uint WallDirectionA { get => Long(JunctionBase + 3); set => SetLong(JunctionBase + 3, value); }
+        /// <summary>Junction only: per edge, flips the outward offset of the wall's second end.</summary>
+        public uint WallDirectionB { get => Long(JunctionBase + 5); set => SetLong(JunctionBase + 5, value); }
+
+        /// <summary>
+        /// Tests the bit of the perimeter edge from point edge to point edge + 1. The closing edge uses bit 0 as in the spec
+        /// (bit n is never set by the cities).
+        /// </summary>
+        public static bool HasWall(uint bits, int edge, int perimeterCount) {
+            int bit = perimeterCount > 0 ? (edge + 1) % perimeterCount : -1;
+            return bit >= 0 && bit < 32 && (bits & (1u << bit)) != 0;
+        }
 
         public override int Read(BinaryReader r, int subtype, int remainingWords) {
-            Junction = subtype == 0;
+            ExplicitSize = subtype == 0;
             int words = 0;
             int n = subtype;
-            if (Junction) {
+            if (ExplicitSize) {
                 n = r.ReadUInt16();
                 words++;
             }
@@ -574,11 +617,11 @@ namespace PsdlViewer.Formats.Psdl {
         }
 
         protected override void WriteBody(BinaryWriter w) {
-            if (Junction) w.Write((ushort)Words.Count);
+            if (ExplicitSize) w.Write((ushort)Words.Count);
             foreach (int v in Words) w.Write((ushort)v);
         }
 
-        public override string Validate() => !Junction && (Words.Count < 1 || Words.Count > 7) ? "road tunnels need 1-7 data words" : null;
+        public override string Validate() => !ExplicitSize && (Words.Count < 1 || Words.Count > 7) ? "tunnels without a size word need 1-7 data words" : null;
     }
 
     /// <summary>Attribute of an unknown type; keeps the raw words (Java viewer behaviour: consumes the rest of the list).</summary>

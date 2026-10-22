@@ -84,6 +84,7 @@ namespace PsdlViewer.UI.Panels {
             detail = scroll;
             detail.Visible = false;
             grid.Changed += () => {
+                grid.Refresh();
                 table.Refresh();
                 Doc.NotifyChanged(DataKind.Inst);
             };
@@ -118,7 +119,11 @@ namespace PsdlViewer.UI.Panels {
             var c = current;
             grid.AddText("Geometry:", () => c.Pkg, v => c.Pkg = v.Trim(), "PKG name without extension");
             grid.AddHex("Room:", () => c.Room, v => c.Room = v);
-            grid.AddHex("Modifiers:", () => c.Modifiers, v => c.Modifiers = v & 0xffff, 4, "Paint job in the low bits");
+            grid.AddHex("Modifiers:", () => c.Modifiers, v => c.Modifiers = v & 0xffff, 4, "Paint job in the low byte, flags in the high byte");
+            grid.AddInt("Paint job:", () => c.PaintJob, v => c.Modifiers = (c.Modifiers & 0xff00) | Math.Clamp(v, 0, 0xff));
+            foreach (var (flag, name, description) in InstComponent.Flags) {
+                grid.AddCheck(name, () => (c.Modifiers & flag) != 0, v => c.Modifiers = v ? c.Modifiers | flag : c.Modifiers & ~flag, description);
+            }
             grid.AddVector("Origin:", () => c.Origin, v => c.Origin = v);
             if (c is InstSimple s) {
                 grid.AddFloat("Scale:", () => s.Scale, v => s.SetOrientationScale(v, s.Angle));

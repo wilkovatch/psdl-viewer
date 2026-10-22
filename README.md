@@ -10,7 +10,7 @@ This is a Godot 4.7 port (with scripts written in C#) of the original PSDL Viewe
 ## Features
 
 - **Supported files**: PSDL files (open, save, append another PSDL file, import vertices, export a text dump), INST and BAI files (open and save), and pathsets (open). Files can also be opened by dropping them onto the window. The INST and BAI files next to a PSDL file with the same name (`sf.psdl` → `sf.inst`, `sf.bai`) can be loaded with it automatically, which you can turn on in the open dialog.
-- **3D view** of the city: fill or line drawing, lit or unlit, with grey, random, texture index or texture map colouring, plus optional room indices, room bounds, city bounds, INST meshes, pathsets and BAI routes.
+- **3D view** of the city, including tunnels and railings: fill or line drawing, lit or unlit, with grey, random, texture index or texture map colouring, plus optional room indices, room bounds, city bounds, INST meshes, pathsets and BAI routes.
 - **Editing panels** for rooms and their attributes, vertices, textures, heights, room paths, INST entries, BAI routes and pathsets. Each panel can be moved to the left, center or bottom dock and renamed.
 - **Tools** (*Tools* menu): automatic neighbours, last attribute flags, room flags, room sorting, dimensions and facade bounds; generating a basic CPVS file from the perimeters; and a random city generator.
 - **Console** (*View→Views→Console*) with the messages and errors of the program.
@@ -60,6 +60,8 @@ All the code is under `Scripts/`:
 | `Scripts/Main.cs` | The main window, its menu and the commands. |
 
 A description for the PSDL format can be found in [the angel-file-formats repository by Dummiesman](https://github.com/Dummiesman/angel-file-formats/blob/master/Midtown%20Madness%202/PSDL.md).
+
+The generation of tunnels, railings, slivers and the ground texture mapping, as well as the interpretation of several fields the specification lists as unknown, are based on [mmclone_v2 by Dummiesman](https://github.com/Dummiesman/mmclone_v2).
 
 ## License
 

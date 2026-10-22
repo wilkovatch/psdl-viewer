@@ -285,9 +285,10 @@ namespace PsdlViewer.UI.Panels {
                 typeGrid.AddInfo("Room:", () => $"{currentIndex:x}  ({Psdl.RoomCenter(room).X:0.#}, {Psdl.RoomCenter(room).Y:0.#}, {Psdl.RoomCenter(room).Z:0.#})");
                 for (int i = 0; i < 8; i++) {
                     int bit = 1 << i;
-                    typeGrid.AddCheck(Room.FlagNames[i], () => room.HasFlag(bit), v => room.SetFlag(bit, v));
+                    typeGrid.AddCheck(Room.FlagNames[i], () => room.HasFlag(bit), v => room.SetFlag(bit, v), Room.FlagDescriptions[i]);
                 }
-                typeGrid.AddHex("Prop rule:", () => room.PropRule, v => room.PropRule = v & 0xff, 2, "Line in proprules.csv (0 = none)");
+                typeGrid.AddHex("Prop rule:", () => room.PropRule, v => room.PropRule = v & 0xff, 2,
+                    "Pair of proprules.csv lines (left and right side of the road) used when a prop path runs through this room; rule n is lines 2(n-1) and 2(n-1)+1, 0 = none");
                 typeGrid.Changed += () => {
                     table.Refresh();
                     Doc.NotifyChanged(DataKind.Rooms);

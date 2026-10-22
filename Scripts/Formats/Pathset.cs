@@ -4,7 +4,7 @@ using System.Numerics;
 
 namespace PsdlViewer.Formats {
     public class PathPoint {
-        /// <summary>Upper 8 bits unknown, lower 24 bits room id.</summary>
+        /// <summary>Upper 8 bits unknown, lower 24 bits room id; not used by the game.</summary>
         public uint Misc;
         public Vector3 Position;
 
@@ -13,16 +13,20 @@ namespace PsdlViewer.Formats {
 
     public class PropPath {
         public const int TypePoints = 0, TypeDirectedPoints = 1, TypeLineStrip = 2;
+        /// <summary>Spacing used by the game when the stored spacing is 0.</summary>
+        public const float DefaultSpacing = 5;
         public static readonly string[] TypeNames = { "Points", "Directed points", "Line strip" };
 
         public string Name = "";
         /// <summary>Name bytes as read, written back unchanged while the name is not edited.</summary>
         public byte[] RawName;
+        /// <summary>Possibly flags, meaning unknown.</summary>
         public uint Unknown1;
         public List<PathPoint> Points = new();
         public int Type;
-        /// <summary>Spacing in units of 1/4 metre.</summary>
+        /// <summary>Spacing in units of 1/4 metre; 0 means the default of 5 metres.</summary>
         public int RawSpacing;
+        /// <summary>Padding after the spacing.</summary>
         public int Unknown3;
 
         public float Spacing { get => RawSpacing / 4f; set => RawSpacing = System.Math.Clamp((int)(value * 4 + 0.5f), 0, 255); }

@@ -149,6 +149,9 @@ namespace PsdlViewer.Core {
                 foreach (var e in edges) {
                     if (e.HasBound) continue;
                     var bound = new FacadeBoundAttribute { TopHeight = e.Top, Vertices = new List<int> { e.P0, e.P1 } };
+                    if (e.P0 >= 0 && e.P0 < psdl.Vertices.Count && e.P1 >= 0 && e.P1 < psdl.Vertices.Count) {
+                        bound.Angle = FacadeBoundAttribute.SunAngle(psdl.Vertices[e.P0], psdl.Vertices[e.P1]);
+                    }
                     attributes.Insert(attributes.IndexOf(e.First), bound);
                     added++;
                 }

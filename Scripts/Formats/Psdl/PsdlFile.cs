@@ -22,18 +22,31 @@ namespace PsdlViewer.Formats.Psdl {
 
     public class Room {
         public const int FlagBit0 = 1, FlagSubterranean = 2, FlagPlain = 4, FlagRoad = 8, FlagIntersection = 16;
-        public const int FlagBit5 = 32, FlagWarp = 64, FlagInst = 128;
+        public const int FlagSpecialBound = 32, FlagWarp = 64, FlagInst = 128;
         public static readonly string[] FlagNames = {
             "Bit 0: Unknown", "Bit 1: Subterranean", "Bit 2: Plain", "Bit 3: Road",
-            "Bit 4: Intersection", "Bit 5: Unknown", "Bit 6: Warp room", "Bit 7: INST"
+            "Bit 4: Intersection", "Bit 5: Special bound", "Bit 6: Warp room", "Bit 7: INST"
         };
-        static readonly string[] ShortFlagNames = { "b0", "Sub", "Plain", "Road", "Inter", "b5", "Warp", "INST" };
+        public static readonly string[] FlagDescriptions = {
+            "Never set in the original cities",
+            "Below ground level (subways, tunnels): echo effect, no rain",
+            "Standard ground level room",
+            "Room with a road",
+            "Intersection for ambient traffic and pedestrians",
+            "Rain is always drawn in this room, even below other geometry; the spec only says \"something about the bound\"",
+            "Room above or below other rooms (bridges, overpasses): the game links it with the rooms whose perimeters overlap it",
+            "Room containing INST objects"
+        };
+        static readonly string[] ShortFlagNames = { "b0", "Sub", "Plain", "Road", "Inter", "Bound", "Warp", "INST" };
 
         public List<PerimeterPoint> Perimeter = new();
         public List<RoomAttribute> Attributes = new();
         /// <summary>Room flags: the bits define the type of the room.</summary>
         public int Flags = FlagPlain;
-        /// <summary>Line in proprules.csv used when a prop path runs through this room (0 = none).</summary>
+        /// <summary>
+        /// Prop rule used when a prop path runs through this room (0 = none): rule n selects lines 2(n - 1) and 2(n - 1) + 1 of
+        /// proprules.csv (header excluded), for the left and right side of the road.
+        /// </summary>
         public int PropRule;
 
         public bool HasFlag(int mask) => (Flags & mask) != 0;
@@ -61,21 +74,31 @@ namespace PsdlViewer.Formats.Psdl {
     }
 
     /// <summary>
-    /// Entry of the last PSDL section (room based props). The Java viewer calls these "roads"; they are now known
-    /// to be prop paths, so apart from the layout the field names (taken from the spec) are still guesses.
+    /// Entry of the last PSDL section (room based props). The Java viewer calls these "roads"; the game uses them as prop paths:
+    /// the props of the first room's prop rule are placed along the roads of all the rooms of the path.
     /// </summary>
     public class RoomPath {
-        public int Unknown4;
-        public int Unknown5;
-        /// <summary>Density of each forward lane (one entry per lane).</summary>
+        /// <summary>
+        /// 32-bit value that is possibly a set of flags (low word nonzero = propulate, high word nonzero = invert propulation); the
+        /// cities use many different bit patterns, so the meaning of the individual bits is unknown.
+        /// </summary>
+        public uint Flags;
+        /// <summary>Position of each forward lane across the road, as a fraction of its width (e.g. 0.25 and 0.75 for 1 + 1 lanes).</summary>
         public List<float> ForwardLanes = new();
-        /// <summary>Density of each backward lane (one entry per lane).</summary>
+        /// <summary>Position of each backward lane across the road, as a fraction of its width.</summary>
         public List<float> BackwardLanes = new();
-        /// <summary>Looks like a bit field.</summary>
+        /// <summary>Looks like a bit field (unknown).</summary>
         public int Unknown6;
+        /// <summary>
+        /// Outer vertices of the first cross section of the first room's road: outer left sidewalk, left road edge, right road
+        /// edge, outer right sidewalk (vertices 0, 1, 4, 5 of a divided road, 0, 0, 1, 1 of a road without sidewalks).
+        /// </summary>
         public int[] StartCrossroads = new int[4];
+        /// <summary>Same as <see cref="StartCrossroads"/> for the last cross section of the last room.</summary>
         public int[] EndCrossroads = new int[4];
         public List<int> Rooms = new();
+        /// <summary>The room numbers are stored as negative values (all or none of them; meaning unknown).</summary>
+        public bool NegativeRooms;
 
         public RoomPath Clone() {
             var copy = (RoomPath)MemberwiseClone();
@@ -116,6 +139,8 @@ namespace PsdlViewer.Formats.Psdl {
         public byte DummyPropRule = 0xcd;
         public Dimensions Dimensions = new();
         public List<RoomPath> RoomPaths = new();
+        /// <summary>Midnight Club (PSD1) only: index in materials.mtl stored after each texture name.</summary>
+        public List<byte> McMaterials = new();
         /// <summary>Bounding spheres per room, only present in Midnight Club (PSD1) files.</summary>
         public List<(Vector3 center, float[] unknown)> McDimensions = new();
 
@@ -180,7 +205,7 @@ namespace PsdlViewer.Formats.Psdl {
                 FileLog.Print($"{Math.Max(0, n - 1L)} textures");
                 for (uint i = 0; i + 1 < n; i++) {
                     Textures.Add(r.ReadLengthString());
-                    if (mc) r.ReadByte();
+                    if (mc) McMaterials.Add(r.ReadByte());
                 }
                 if (progress != null) progress.Value = stream.Position;
 
@@ -290,8 +315,7 @@ namespace PsdlViewer.Formats.Psdl {
         }
 
         static void ReadRoomPath(BinaryReader r, RoomPath path) {
-            path.Unknown4 = r.ReadUInt16();
-            path.Unknown5 = r.ReadUInt16();
+            path.Flags = r.ReadUInt32();
             int forward = r.ReadByte();
             int backward = r.ReadByte();
             for (int i = 0; i < forward; i++) path.ForwardLanes.Add(r.ReadSingle());
@@ -300,7 +324,12 @@ namespace PsdlViewer.Formats.Psdl {
             for (int i = 0; i < 4; i++) path.StartCrossroads[i] = r.ReadUInt16();
             for (int i = 0; i < 4; i++) path.EndCrossroads[i] = r.ReadUInt16();
             int rooms = r.ReadByte();
-            for (int i = 0; i < rooms; i++) path.Rooms.Add(r.ReadUInt16() - 1);
+            for (int i = 0; i < rooms; i++) {
+                // the numbers are signed (room index + 1, sometimes negated)
+                int room = r.ReadInt16();
+                if (room < 0) path.NegativeRooms = true;
+                path.Rooms.Add(Math.Abs(room) - 1);
+            }
         }
 
         /// <summary>Fits the bounding box and sphere to the vertices; keeps the old values when there are none.</summary>
@@ -335,6 +364,9 @@ namespace PsdlViewer.Formats.Psdl {
                     string error = Rooms[i].Attributes[j].Validate();
                     if (error != null) throw new InvalidDataException($"Room {i:x}, attribute {j:x}: {error}");
                 }
+            }
+            for (int i = 0; i < RoomPaths.Count; i++) {
+                if (RoomPaths[i].Rooms.Any(b => b < 0 || b >= short.MaxValue)) throw new InvalidDataException($"Room path {i:x}: room numbers are stored as 16-bit signed values and must be below {short.MaxValue:x}.");
             }
             string temp = path + "#";
             using (var stream = File.Create(temp))
@@ -383,8 +415,7 @@ namespace PsdlViewer.Formats.Psdl {
             if (progress != null) progress.Note = "Writing room paths";
             w.Write((uint)RoomPaths.Count);
             foreach (var path in RoomPaths) {
-                w.Write((ushort)path.Unknown4);
-                w.Write((ushort)path.Unknown5);
+                w.Write(path.Flags);
                 w.Write((byte)path.ForwardLanes.Count);
                 w.Write((byte)path.BackwardLanes.Count);
                 foreach (float f in path.ForwardLanes) w.Write(f);
@@ -393,7 +424,7 @@ namespace PsdlViewer.Formats.Psdl {
                 foreach (int v in path.StartCrossroads) w.Write((ushort)v);
                 foreach (int v in path.EndCrossroads) w.Write((ushort)v);
                 w.Write((byte)path.Rooms.Count);
-                foreach (int b in path.Rooms) w.Write((ushort)(b + 1));
+                foreach (int b in path.Rooms) w.Write((short)(path.NegativeRooms ? -(b + 1) : b + 1));
             }
             if (progress != null) progress.Value = progress.Maximum;
         }

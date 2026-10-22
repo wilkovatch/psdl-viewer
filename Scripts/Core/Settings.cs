@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Godot;
@@ -44,6 +45,32 @@ namespace PsdlViewer.Core {
 
         public static Settings Current { get; private set; } = new();
         public static event Action Changed;
+
+        // texture and geometry folders next to the open PSDL file's folder; only for that file, never saved
+        static string[] fileTexturePaths = Array.Empty<string>(), fileGeometryPaths = Array.Empty<string>();
+
+        /// <summary>The configured texture folders followed by the ones found for the open PSDL file.</summary>
+        public static List<string> TextureSearchPaths => SearchPaths(Current.TexturePaths, fileTexturePaths);
+        /// <summary>The configured geometry folders followed by the ones found for the open PSDL file.</summary>
+        public static List<string> GeometrySearchPaths => SearchPaths(Current.GeometryPaths, fileGeometryPaths);
+
+        static List<string> SearchPaths(List<string> configured, string[] file) =>
+            configured.Concat(file.Where(f => !configured.Contains(f, StringComparer.OrdinalIgnoreCase))).ToList();
+
+        /// <summary>Uses the texture and geometry folders next to the PSDL file's folder (MM2 layout) while that file is open. Returns whether they changed.</summary>
+        public static bool SetFileFolders(string psdlPath) {
+            string city = Path.GetDirectoryName(Path.GetFullPath(psdlPath));
+            string root = city == null ? null : Path.GetDirectoryName(city);
+            string[] Find(string name) {
+                string dir = root == null ? null : Path.Combine(root, name);
+                return dir != null && Directory.Exists(dir) ? new[] { dir } : Array.Empty<string>();
+            }
+            string[] tex = Find("texture"), geo = Find("geometry");
+            bool changed = !tex.SequenceEqual(fileTexturePaths) || !geo.SequenceEqual(fileGeometryPaths);
+            fileTexturePaths = tex;
+            fileGeometryPaths = geo;
+            return changed;
+        }
 
         static string FilePath => ProjectSettings.GlobalizePath("user://settings.json");
         static readonly JsonSerializerOptions JsonOptions = new() { IncludeFields = true, WriteIndented = true };

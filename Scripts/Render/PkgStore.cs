@@ -45,7 +45,7 @@ namespace PsdlViewer.Render {
                 if (missing.Contains(name)) return null;
             }
             PkgFile pkg = null;
-            string path = TextureStore.FindFile(name, Settings.Current.GeometryPaths, new[] { "pkg" });
+            string path = TextureStore.FindFile(name, Settings.GeometrySearchPaths, new[] { "pkg" });
             if (path != null) {
                 try {
                     pkg = PkgFile.Load(path);

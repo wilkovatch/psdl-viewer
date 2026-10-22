@@ -76,7 +76,7 @@ namespace PsdlViewer.UI.Panels {
         string Status(string name) {
             if (string.IsNullOrEmpty(name)) return "";
             if (status.TryGetValue(name, out string s)) return s;
-            string file = TextureStore.FindFile(name, Settings.Current.TexturePaths, new[] { "tex", "gif", "jpg", "tga", "png", "bmp" });
+            string file = TextureStore.FindFile(name, Settings.TextureSearchPaths, new[] { "tex", "gif", "jpg", "tga", "png", "bmp" });
             s = file == null ? "missing" : System.IO.Path.GetExtension(file).TrimStart('.');
             status[name] = s;
             return s;

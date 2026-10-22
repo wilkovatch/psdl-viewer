@@ -75,7 +75,7 @@ namespace PsdlViewer.Render {
                 if (cache.TryGetValue(name, out var cached)) return cached;
             }
             var entry = new TextureEntry { Name = name };
-            entry.File = FindFile(name, Settings.Current.TexturePaths, Extensions);
+            entry.File = FindFile(name, Settings.TextureSearchPaths, Extensions);
             try {
                 if (entry.File == null) entry.NotFound = true;
                 else entry.Image3D = Decode(entry.File, out entry.HasAlpha);

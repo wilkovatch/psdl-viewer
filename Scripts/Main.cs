@@ -608,7 +608,7 @@ namespace PsdlViewer {
                     _ = Run("Opening PSDL-ML file", async p => {
                         await UnloadSiblings(p);
                         var psdl = await Task.Run(() => PsdlMl.Import(path, weld, p));
-                        GuessFolders(path);
+                        UseFileFolders(path);
                         Doc.SetPsdl(psdl, path);
                         if (Settings.Current.LoadSiblingInst) await LoadSiblingInst(path, p);
                         if (Settings.Current.LoadSiblingBai) await LoadSiblingBai(path, p);
@@ -620,7 +620,7 @@ namespace PsdlViewer {
             _ = Run("Opening PSDL file", async p => {
                 await UnloadSiblings(p);
                 var psdl = await Task.Run(() => PsdlFile.Load(path, p));
-                GuessFolders(path);
+                UseFileFolders(path);
                 Doc.SetPsdl(psdl, path);
                 string inst = Settings.Current.LoadSiblingInst ? await LoadSiblingInst(path, p) : null;
                 string bai = Settings.Current.LoadSiblingBai ? await LoadSiblingBai(path, p) : null;
@@ -668,27 +668,11 @@ namespace PsdlViewer {
             }
         }
 
-        /// <summary>When no folders are configured, uses the texture and geometry folders next to the city folder (MM2 layout).</summary>
-        void GuessFolders(string psdlPath) {
-            var s = Settings.Current;
-            bool changed = false;
-            string dir = Path.GetDirectoryName(Path.GetFullPath(psdlPath));
-            foreach (string up in new[] { dir, Path.GetDirectoryName(dir) }) {
-                if (up == null) continue;
-                string tex = Path.Combine(up, "texture");
-                string geo = Path.Combine(up, "geometry");
-                if (s.TexturePaths.Count == 0 && Directory.Exists(tex)) {
-                    s.TexturePaths.Add(tex);
-                    changed = true;
-                }
-                if (s.GeometryPaths.Count == 0 && Directory.Exists(geo)) {
-                    s.GeometryPaths.Add(geo);
-                    changed = true;
-                }
-            }
-            if (!changed) return;
-            Settings.Save();
-            CallDeferred(MethodName.SetStatus, "Texture/geometry folders were set automatically; change them in File > Options.");
+        /// <summary>Also searches the texture and geometry folders next to the city folder (MM2 layout) while this PSDL file is open; they are not saved.</summary>
+        static void UseFileFolders(string psdlPath) {
+            if (!Settings.SetFileFolders(psdlPath)) return;
+            TextureStore.Flush();
+            PkgStore.Flush();
         }
 
         public async Task ReplacePsdl(PsdlFile psdl, string title, string path = null) {
@@ -774,7 +758,7 @@ namespace PsdlViewer {
             if (args.Contains("--labels")) Settings.Current.ShowRoomIndices = true;
             scene.ApplySettings();
             await Run("Opening PSDL file", async p => {
-                GuessFolders(psdl);
+                UseFileFolders(psdl);
                 var file = await Task.Run(() => PsdlFile.Load(psdl, p));
                 Doc.SetPsdl(file, psdl);
                 await scene.RebuildPsdl(p);

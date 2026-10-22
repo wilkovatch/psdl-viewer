@@ -33,6 +33,12 @@ namespace PsdlViewer.Render {
         public int PropCount { get; private set; }
         public int TrafficLightCount { get; private set; }
 
+        // what the last rebuild of each layer placed, for the glTF export
+        internal IReadOnlyCollection<Placement> InstPlacements { get; private set; } = Array.Empty<Placement>();
+        internal IReadOnlyCollection<Placement> PathsetPlacements { get; private set; } = Array.Empty<Placement>();
+        internal IReadOnlyCollection<MeshBatch> PathsetDecals { get; private set; } = Array.Empty<MeshBatch>();
+        internal IReadOnlyCollection<Placement> PropPlacements { get; private set; } = Array.Empty<Placement>();
+
         public override void _Ready() {
             Instance = this;
             cityRoot = AddRoot("City");
@@ -178,7 +184,7 @@ namespace PsdlViewer.Render {
 
         // ---- INST ----
 
-        class Placement {
+        internal class Placement {
             public PkgMeshData Mesh;
             public List<Transform3D> Transforms = new();
         }
@@ -225,6 +231,7 @@ namespace PsdlViewer.Render {
                 return result;
             });
             await Commit(instRoot, groups, progress, "Uploading INST");
+            InstPlacements = groups.Values;
             instPicks = picks.ToArray();
             UpdateInstHighlight();
         }
@@ -289,6 +296,8 @@ namespace PsdlViewer.Render {
                 return result;
             });
             await Commit(pathsetRoot, groups, progress, "Uploading pathsets");
+            PathsetPlacements = groups.Values;
+            PathsetDecals = decals.Values;
             foreach (var batch in decals.Values) {
                 if (batch.Positions.Count == 0) continue;
                 var arrays = new Godot.Collections.Array();
@@ -383,6 +392,7 @@ namespace PsdlViewer.Render {
                 return result;
             });
             await Commit(propRoot, groups, progress, "Uploading props");
+            PropPlacements = groups.Values;
             PropCount = count;
             TrafficLightCount = lights;
             if (missing.Count > 0) GD.PushWarning($"Props without geometry: {string.Join(", ", missing)}");

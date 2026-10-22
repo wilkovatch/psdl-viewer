@@ -155,6 +155,23 @@ namespace PsdlViewer.UI {
             ShowFileDialog(d);
         }
 
+        /// <summary>Save picker with a checkbox per option; ok gets the checked state of each.</summary>
+        public static void SaveFile(string title, string[] filters, string defaultName, (string label, bool value)[] options, Action<string, bool[]> ok) {
+            var d = MakeFileDialog(title, FileDialog.FileModeEnum.SaveFile, filters,
+                string.IsNullOrEmpty(Settings.Current.SavePath) ? Settings.Current.OpenPath : Settings.Current.SavePath);
+            if (!string.IsNullOrEmpty(defaultName)) d.CurrentFile = defaultName;
+            foreach (var (label, value) in options) d.AddOption(label, Array.Empty<string>(), value ? 1 : 0);
+            d.FileSelected += path => {
+                Settings.Current.SavePath = Path.GetDirectoryName(path);
+                Settings.Save();
+                var selected = d.GetSelectedOptions();
+                var values = Array.ConvertAll(options, o => selected.TryGetValue(o.label, out var v) ? v.AsInt32() != 0 : o.value);
+                d.QueueFree();
+                ok(path, values);
+            };
+            ShowFileDialog(d);
+        }
+
         public static void OpenFolder(string title, string start, Action<string> ok) {
             var d = MakeFileDialog(title, FileDialog.FileModeEnum.OpenDir, null, string.IsNullOrEmpty(start) ? Settings.Current.OpenPath : start);
             d.DirSelected += path => {

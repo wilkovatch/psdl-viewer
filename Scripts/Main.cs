@@ -287,7 +287,7 @@ namespace PsdlViewer {
         // ---- menu ----
 
         enum Cmd {
-            New, Open, Save, OpenInst, SaveInst, OpenBai, SaveBai, OpenPathset, OpenProps, ImportVertices, AppendPsdl, ExportText, Options, Exit,
+            New, Open, Save, OpenInst, SaveInst, OpenBai, SaveBai, OpenPathset, OpenProps, ImportVertices, AppendPsdl, ExportText, ExportGltf, Options, Exit,
             ViewRooms, ViewVertices, ViewTextures, ViewHeights, ViewRoomPaths, ViewInst, ViewRoutes, ViewTerrain, ViewPathsets, ViewProps, ViewConsole, RefreshRooms, FlushTextures, ResetLayout,
             AutoNeighbours, AutoLastAttr, AutoRoomFlags, AutoRoomSort, AutoDimensions, RandomTerrain, AutoFacadeBounds, GenerateCpvs,
             ListAttributes, About
@@ -312,6 +312,7 @@ namespace PsdlViewer {
             Item(file, "Import vertices...", Cmd.ImportVertices);
             Item(file, "Append PSDL file...", Cmd.AppendPsdl);
             Item(file, "Export PSDL text dump...", Cmd.ExportText);
+            Item(file, "Export glTF...", Cmd.ExportGltf);
             file.AddSeparator();
             Item(file, "Options...", Cmd.Options, Key.P);
             file.AddSeparator();
@@ -475,6 +476,9 @@ namespace PsdlViewer {
                         }
                     });
                     break;
+                case Cmd.ExportGltf:
+                    ExportGltf();
+                    break;
                 case Cmd.Options:
                     ShowSingleton<OptionsPanel>(() => new OptionsPanel(), leftDock);
                     break;
@@ -540,6 +544,34 @@ namespace PsdlViewer {
                     ShowAbout();
                     break;
             }
+        }
+
+        void ExportGltf() {
+            var s = Settings.Current;
+            string name = string.IsNullOrEmpty(Doc.PsdlPath) ? "city" : Path.GetFileNameWithoutExtension(Doc.PsdlPath);
+            Dialogs.SaveFile("Export glTF", new[] { "*.gltf ; glTF files" }, name + ".gltf",
+                new[] {
+                    ("Include INST", s.ExportInst), ("Include pathsets", s.ExportPathsets), ("Include props", s.ExportProps),
+                    ("Unlit materials", s.LightingMode != Settings.LightingLit)
+                },
+                (path, options) => {
+                    s.ExportInst = options[0];
+                    s.ExportPathsets = options[1];
+                    s.ExportProps = options[2];
+                    Settings.Save();
+                    if (!path.EndsWith(".gltf", StringComparison.OrdinalIgnoreCase)) path += ".gltf";
+                    var export = new GltfExporter.Options {
+                        Name = name,
+                        Psdl = Doc.Psdl,
+                        Settings = s.Clone(),
+                        Inst = options[0] ? scene.InstPlacements : null,
+                        Pathsets = options[1] ? scene.PathsetPlacements : null,
+                        Decals = options[1] ? scene.PathsetDecals : null,
+                        Props = options[2] ? scene.PropPlacements : null,
+                        Unlit = options[3]
+                    };
+                    _ = Run("Exporting glTF", async p => SetStatus(await Task.Run(() => GltfExporter.Export(path, export, p))));
+                });
         }
 
         void RunTool(string title, Action<Progress> tool, params DataKind[] changed) {
@@ -853,7 +885,7 @@ namespace PsdlViewer {
             }
         }
 
-        // ---- command line: --psdl, --inst, --bai, --sibling-inst, --sibling-bai, --pathset, --props <folder>, --sibling-props, --screenshot <png>, --camera x,y,z,pitch,yaw ----
+        // ---- command line: --psdl, --inst, --bai, --sibling-inst, --sibling-bai, --pathset, --props <folder>, --sibling-props, --screenshot <png>, --camera x,y,z,pitch,yaw, --export-gltf <gltf> ----
 
         async void HandleCommandLine() {
             var args = OS.GetCmdlineUserArgs();
@@ -906,6 +938,21 @@ namespace PsdlViewer {
             if (Arg("--camera") is string cam) {
                 float[] c = cam.Split(',').Select(s => float.Parse(s, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
                 foreach (var view in Descendants<TerrainView>(this)) view.SetCamera(new Vector3(c[0], c[1], c[2]), new Vector3(c[3], c[4], 0));
+            }
+            if (Arg("--export-gltf") is string gltf) {
+                var export = new GltfExporter.Options {
+                    Name = Path.GetFileNameWithoutExtension(psdl),
+                    Psdl = Doc.Psdl,
+                    Settings = Settings.Current.Clone(),
+                    Inst = scene.InstPlacements,
+                    Pathsets = scene.PathsetPlacements,
+                    Decals = scene.PathsetDecals,
+                    Props = scene.PropPlacements,
+                    Unlit = Settings.Current.LightingMode != Settings.LightingLit
+                };
+                await Run("Exporting glTF", async p => GD.Print(await Task.Run(() => GltfExporter.Export(gltf, export, p))));
+                GetTree().Quit();
+                return;
             }
             string shot = Arg("--screenshot");
             if (shot == null) return;

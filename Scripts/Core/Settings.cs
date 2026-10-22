@@ -40,6 +40,9 @@ namespace PsdlViewer.Core {
         public bool LoadSiblingInst;
         public bool LoadSiblingBai;
         public bool LoadSiblingProps;
+        public bool ExportInst = true;
+        public bool ExportPathsets = true;
+        public bool ExportProps = true;
         public float CameraFov = 60;
         public int CameraControls = CameraSchemeA;
         public bool EmulateMiddleButton;
